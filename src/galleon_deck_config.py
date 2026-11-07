@@ -551,7 +551,7 @@ class Window(Adw.ApplicationWindow):
             row.connect("notify::selected", lambda r, _p: self.set_field("media", MEDIA[r.get_selected()]))
             action.add(row)
         elif k == "page":
-            names = [p["name"] for p in self.data["page"]] + ["back"]
+            names = [p["name"] for p in self.data["page"]] + ["next", "previous", "back"]
             row = Adw.ComboRow(title="Page", model=Gtk.StringList.new(names),
                                selected=names.index(spec["page"]) if spec.get("page") in names else 0)
             row.connect("notify::selected", lambda r, _p: self.set_field("page", names[r.get_selected()]))
