@@ -2,7 +2,7 @@
 """Stream Deck driver for the Corsair Galleon 100 SD's built-in deck (1b1c:2b18).
 
 Elgato's software is Windows/macOS only, so this takes its place: profiles of
-pages of 12 keys with custom images, a free-form top screen, the two dials,
+pages of 12 keys with custom images (an animation plays on the key), a free-form top screen, the two dials,
 built-in visual themes, and profiles that switch automatically by active app.
 
 Protocol (from Julusian/node-elgato-stream-deck, "Galleon K100 SD"):
@@ -30,11 +30,11 @@ import json
 import os
 import random
 import re
-import select
-import shutil
 import urllib.error
 import urllib.parse
 import urllib.request
+import select
+import shutil
 import signal
 import socket
 import subprocess
@@ -56,15 +56,16 @@ VERSION = "1.3.0"  # add-ons can require a minimum version
 VID, PID = "00001B1C", "00002B18"
 KEYS = 12
 KEY_PX = 160
+# Symbols Nerd Font. Hold the back key this long to return to the top of a folder.
+BACK_ICON = "\U000F004D"  # md-arrow_left
+FOLDER_ICON = "\uf07b"  # fa-folder
+FOLDER_HOLD = 1.0
 LCD_W, LCD_H = 720, 384
 PING_INTERVAL = 0.5
 CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "galleon-deck")
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.toml")
 PROFILE_DIR = os.path.join(CONFIG_DIR, "profiles")
 THEME_DIR = os.path.join(CONFIG_DIR, "themes")
-BACK_ICON = "\U000F004D"  # md-arrow_left
-FOLDER_ICON = "\uf07b"  # fa-folder
-FOLDER_HOLD = 1.0
 
 
 def log(*args):
@@ -527,7 +528,135 @@ def _stored_key(spec, seen=None):
     return out
 
 
-def render_key(spec, theme, pressed=False):
+# A key is one JPEG on the USB link. Cap how often, and how many at once, so a
+# page of GIFs cannot stall key presses. Delays under 20 ms are the GIF "as fast
+# as possible" value; browsers play those at 100 ms.
+_MIN_FRAME_S = 0.05
+_MAX_ANIM_FRAMES = 120
+_MAX_ANIM_EDGE = 320
+ANIM_PER_WAKE = 3
+_anim_cache = {}  # absolute path -> (mtime token, frames or None, durations or None)
+
+
+def _frame_seconds(im):
+    try:
+        ms = float(im.info.get("duration", 100))
+    except (TypeError, ValueError):
+        ms = 100
+    if ms < 20:
+        ms = 100
+    return max(_MIN_FRAME_S, ms / 1000.0)
+
+
+def frame_index_at(durations, when):
+    """Which frame is showing at unix time `when`. The animation loops."""
+    if not durations:
+        return 0
+    period = sum(durations)
+    if period <= 0:
+        return 0
+    t = when % period
+    acc = 0.0
+    for i, d in enumerate(durations):
+        acc += d
+        if t < acc:
+            return i
+    return len(durations) - 1
+
+
+def seconds_until_frame(durations, when):
+    """Seconds until the frame at `when` gives way to the next one."""
+    if not durations:
+        return _MIN_FRAME_S
+    period = sum(durations)
+    if period <= 0:
+        return _MIN_FRAME_S
+    t = when % period
+    acc = 0.0
+    for d in durations:
+        acc += d
+        if t < acc - 1e-6:
+            return acc - t
+    return max(0.0, period - t)
+
+
+def _decode_animation(path):
+    """Composited RGBA frames and their durations, or (None, None) for a still."""
+    try:
+        im = Image.open(path)
+    except (OSError, ValueError) as e:
+        log(f"image {path}: {e}")
+        return None, None
+    try:
+        count = getattr(im, "n_frames", 1) or 1
+        if count <= 1:
+            return None, None
+        if count > _MAX_ANIM_FRAMES:
+            log(f"image {path}: playing the first {_MAX_ANIM_FRAMES} of {count} frames")
+            count = _MAX_ANIM_FRAMES
+        frames, durations = [], []
+        for i in range(count):
+            im.seek(i)
+            frame = im.convert("RGBA").copy()
+            if max(frame.size) > _MAX_ANIM_EDGE:
+                frame.thumbnail((_MAX_ANIM_EDGE, _MAX_ANIM_EDGE), Image.Resampling.LANCZOS)
+            frames.append(frame)
+            durations.append(_frame_seconds(im))
+        return (frames, durations) if frames else (None, None)
+    except Exception as e:  # a bad GIF should not take the deck down
+        log(f"image {path}: {e}")
+        return None, None
+    finally:
+        im.close()
+
+
+def _load_animation(path):
+    """(frames, durations, mtime token) for an animated image, else None.
+
+    Frames are already composited, so a GIF that only stores what changed still
+    plays the whole picture. The result is cached until the file changes.
+    """
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    token = (st.st_mtime_ns, st.st_size)
+    hit = _anim_cache.get(path)
+    if hit and hit[0] == token:
+        return None if hit[1] is None else (hit[1], hit[2], token)
+    frames, durations = _decode_animation(path)
+    _anim_cache.pop(path, None)
+    _anim_cache[path] = (token, frames, durations)
+    if len(_anim_cache) > 24:
+        _anim_cache.pop(next(iter(_anim_cache)))
+    if not frames:
+        return None
+    return frames, durations, token
+
+
+def key_animation(spec):
+    """The animation on this key, or None when the image is a still (or absent)."""
+    if not isinstance(spec, dict) or spec.get("stat") or not spec.get("image"):
+        return None
+    return _load_animation(config_path(spec["image"]))
+
+
+def _open_key_image(image, when):
+    """RGBA pixels for a key image.
+
+    `when` is a unix time, and an animation shows the frame at that time.
+    None shows the first frame, so a folder mosaic does not flicker.
+    """
+    path = config_path(image)
+    if when is not None:
+        anim = _load_animation(path)
+        if anim:
+            frames, durations, _token = anim
+            return frames[frame_index_at(durations, when)].copy()
+    return Image.open(path).convert("RGBA")
+
+
+def render_key(spec, theme, pressed=False, when=None):
     if spec.get("stat"):
         return render_stat_key(spec, theme, pressed)
     # A folder with no icon of its own shows the keys inside it, the way a
@@ -549,7 +678,7 @@ def render_key(spec, theme, pressed=False):
     # edge so the theme frame and key colour do not show around it.
     if spec.get("fill") and image:
         try:
-            pic = Image.open(config_path(image)).convert("RGBA")
+            pic = _open_key_image(image, when)
             pic = ImageOps.fit(pic, (KEY_PX, KEY_PX), Image.Resampling.LANCZOS)
             img.paste(pic, (0, 0), pic)
             if label:
@@ -567,7 +696,7 @@ def render_key(spec, theme, pressed=False):
                colour(spec.get("border", theme["border"]), theme), bw, tick=spec.get("border"))
     if image:
         try:
-            pic = Image.open(config_path(image)).convert("RGBA")
+            pic = _open_key_image(image, when)
             pic.thumbnail((96, 96) if label else (124, 124))
             y = 16 if label else (KEY_PX - pic.height) // 2
             img.paste(pic, ((KEY_PX - pic.width) // 2, y), pic)
@@ -1968,6 +2097,8 @@ class App:
         self.lock = threading.RLock()  # the window-event thread also switches profiles
         self.auto_target = None
         self.published = None
+        self.anim_shown = {}  # key index -> (image, file token, frame, pressed)
+        self.flash_until = {}  # key index -> unix time a confirm flash owns the face
 
     # config ---------------------------------------------------------------
     def reload_if_changed(self):
@@ -2049,7 +2180,7 @@ class App:
         return place_label(page["name"], self._page_keys(), self.folder_path)
 
     # drawing --------------------------------------------------------------
-    def key_image(self, i, pressed=False):
+    def key_image(self, i, pressed=False, when=None):
         spec = self.keys()[i]
         pressed = pressed or i in self.repeating  # a running repeat stays lit
         if "wallpaper_theme" in spec:
@@ -2060,7 +2191,7 @@ class App:
             name = spec["set_theme"]
             img = render_theme_key(name, self.cfg["themes"][name], name == self.prof()["theme_name"])
             return Image.eval(img, lambda v: 255 - v) if pressed else img
-        return render_key(spec, self.theme, pressed)
+        return render_key(spec, self.theme, pressed, when=when)
 
     def publish_state(self):
         """Tell the configurator what the deck shows, so it can follow along."""
@@ -2078,7 +2209,73 @@ class App:
                 log(f"state file: {e}")
 
     def draw_key(self, i, pressed=False):
-        self.deck.key_image(i, jpeg(self.key_image(i, pressed)))
+        now = time.time()
+        self.deck.key_image(i, jpeg(self.key_image(i, pressed, when=now)))
+        self._note_anim(i, pressed, now)
+
+    def _note_anim(self, i, pressed, now):
+        try:
+            spec = self.keys()[i]
+        except IndexError:
+            return
+        anim = key_animation(spec)
+        if not anim:
+            self.anim_shown.pop(i, None)
+            return
+        _frames, durations, token = anim
+        shown = bool(pressed or i in self.repeating)
+        self.anim_shown[i] = (spec.get("image"), token, frame_index_at(durations, now), shown)
+
+    def _anim_delay(self):
+        """Seconds until an animated key needs a new frame, or None if nothing is moving."""
+        if not self.cfg:
+            return None
+        now = time.time()
+        soon = None
+        moving = False
+        for i, spec in enumerate(self.keys()):
+            if not isinstance(spec, dict):
+                continue
+            hold = self.flash_until.get(i, 0) - now
+            if hold > 0:
+                moving = True
+                soon = hold if soon is None else min(soon, hold)
+                continue
+            anim = key_animation(spec)
+            if not anim:
+                continue
+            moving = True
+            _frames, durations, token = anim
+            shown = i in self.held or i in self.repeating
+            mark = (spec.get("image"), token, frame_index_at(durations, now), shown)
+            if self.anim_shown.get(i) != mark:
+                return 0.0
+            wait = seconds_until_frame(durations, now)
+            soon = wait if soon is None else min(soon, wait)
+        return soon if moving else None
+
+    def draw_due_animations(self):
+        """Send the next frame of any animated key. Static keys are left as they are."""
+        if not self.deck or not self.cfg:
+            return
+        now = time.time()
+        sent = 0
+        for i, spec in enumerate(self.keys()):
+            if not isinstance(spec, dict) or self.flash_until.get(i, 0) > now:
+                continue
+            anim = key_animation(spec)
+            if not anim:
+                self.anim_shown.pop(i, None)
+                continue
+            _frames, durations, token = anim
+            shown = i in self.held or i in self.repeating
+            mark = (spec.get("image"), token, frame_index_at(durations, now), shown)
+            if self.anim_shown.get(i) == mark:
+                continue
+            self.draw_key(i, pressed=i in self.held)
+            sent += 1
+            if sent >= ANIM_PER_WAKE:
+                return
 
     def draw_keys(self):
         for i in range(KEYS):
@@ -2444,10 +2641,14 @@ class App:
         for _ in range(2):
             with self.lock:
                 if not showing():
+                    self.flash_until.pop(i, None)
                     return
+                # The tick replaces the key face. Hold the animation until it is drawn back.
+                self.flash_until[i] = time.time() + 1.0
                 self.deck.key_image(i, jpeg(render_key(spec, th)))
             time.sleep(0.6)
             with self.lock:
+                self.flash_until.pop(i, None)
                 if not showing():
                     return
                 self.draw_key(i)
@@ -2621,7 +2822,13 @@ class App:
                     time.sleep(2)
                     continue
             try:
-                r, _, _ = select.select([self.deck.fd], [], [], max(0.0, min(0.1, next_tick - time.time())))
+                with self.lock:
+                    anim_wait = self._anim_delay()
+                timeout = next_tick - time.time()
+                if anim_wait is not None:
+                    timeout = min(timeout, anim_wait)
+                timeout = max(0.0, min(0.1, timeout))
+                r, _, _ = select.select([self.deck.fd], [], [], timeout)
                 with self.lock:
                     if r:
                         self.handle(self.deck.read())
@@ -2636,6 +2843,7 @@ class App:
                         self.draw_stat_keys()
                     elif self.lcd_dirty:
                         self.draw_lcd()
+                    self.draw_due_animations()
                     self.publish_state()
             except OSError as e:
                 log(f"device error: {e}")

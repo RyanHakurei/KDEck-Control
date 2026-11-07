@@ -217,17 +217,20 @@ class Window(Adw.ApplicationWindow):
         self.page = 0
         self.key = 0
         self.folder_path = []  # indexes from the page key down into the folder being edited
-        self._skip_select = None  # a double-click opens the folder; the click after it must not select
+        self._skip_select = None  # a double-click opens a folder; ignore the click that follows
         self.picked_kind = None  # an action chosen for a key but not filled in yet
-        self.picked_press = None  # the passthrough chosen for a stat key
+        self.picked_press = None  # the passthrough action under a system stat, same idea
         self.pending = {}  # debounce source ids
         self.icons = None
         self.addons = None  # galleon-addon list --json, fetched when the Add-ons tab is built
         self.followed = gd.deck_state()  # open on whatever the deck is showing
+        self._anim_timer = None  # preview timer for animated key images
+        self._anim_preview = {}  # key index -> (image, file token, frame) already shown
         if self.followed and self.followed.get("profile") in self.model.profiles:
             self.profile = self.followed["profile"]
             names = [p["name"] for p in self.pages()]
             self.page = names.index(self.followed["page"]) if self.followed.get("page") in names else 0
+            self.folder_path = self.resolved_folder(self.followed.get("folder"))
 
         css = Gtk.CssProvider()
         css.load_from_data(CSS)
@@ -441,7 +444,8 @@ class Window(Adw.ApplicationWindow):
                 images = [gd.render_key({}, theme)] * gd.KEYS
                 self.show_error(str(e))
         else:
-            images = [gd.render_key(spec if isinstance(spec, dict) else {}, theme) for spec in slots]
+            when = time.time()
+            images = [gd.render_key(spec if isinstance(spec, dict) else {}, theme, when=when) for spec in slots]
         for i, img in enumerate(images):
             self.key_pictures[i].set_paintable(texture(img.resize((KEY_PREVIEW, KEY_PREVIEW))))
             if i == self.key:
@@ -464,6 +468,44 @@ class Window(Adw.ApplicationWindow):
             state.update(playing)
         self.lcd.set_paintable(texture(gd.render_lcd(state, theme).resize(LCD_PREVIEW)))
         self.refresh_folder_bar()
+        self.sync_key_animation()
+
+    def sync_key_animation(self):
+        """Keep the deck preview playing any GIF (or other animation) on the keys in view."""
+        slots = self.slot_list() or []
+        animated = any(isinstance(spec, dict) and gd.key_animation(spec) for spec in slots)
+        if animated and self._anim_timer is None:
+            self._anim_timer = GLib.timeout_add(50, self.tick_key_animations)
+        elif not animated and self._anim_timer is not None:
+            GLib.source_remove(self._anim_timer)
+            self._anim_timer = None
+
+    def tick_key_animations(self):
+        slots = self.slot_list()
+        if not slots:
+            self._anim_timer = None
+            return False
+        theme = self.model.theme_for(self.profile)
+        when = time.time()
+        alive = False
+        for i, spec in enumerate(slots):
+            if i >= len(self.key_pictures) or not isinstance(spec, dict):
+                continue
+            anim = gd.key_animation(spec)
+            if not anim:
+                continue
+            alive = True
+            _frames, durations, token = anim
+            mark = (spec.get("image"), token, gd.frame_index_at(durations, when))
+            if self._anim_preview.get(i) == mark:
+                continue
+            self._anim_preview[i] = mark
+            img = gd.render_key(spec, theme, when=when)
+            self.key_pictures[i].set_paintable(texture(img.resize((KEY_PREVIEW, KEY_PREVIEW))))
+        if not alive:
+            self._anim_timer = None
+            return False
+        return True
 
     def refresh_folder_bar(self):
         while (child := self.folder_buttons.get_first_child()):
@@ -574,7 +616,11 @@ class Window(Adw.ApplicationWindow):
             self.add_group(page, g)
             return
 
-        look = Adw.PreferencesGroup(title=f"Key {self.key + 1}", description="Top-left is 1; keys run left to right, top to bottom.")
+        where = ""
+        if self.folder_path:
+            where = "Inside " + gd.place_label(self.pages()[self.page]["name"], self.pages()[self.page].get("keys", []), self.folder_path) + ". "
+        look = Adw.PreferencesGroup(title=f"Key {self.key + 1}",
+                                    description=where + "Top-left is 1; keys run left to right, top to bottom.")
         clear = Gtk.Button(label="Clear", valign=Gtk.Align.CENTER, css_classes=["flat"])
         clear.connect("clicked", lambda _b: self.clear_key())
         look.set_header_suffix(clear)
@@ -584,26 +630,29 @@ class Window(Adw.ApplicationWindow):
         label.connect("changed", lambda r: self.set_field("label", r.get_text()))
         look.add(label)
 
-        icon_row = Adw.ActionRow(title="Icon", subtitle="Any Nerd Font icon")
-        self.icon_glyph = Gtk.Label(label=spec.get("icon", ""), css_classes=["glyph"])
-        icon_row.add_suffix(self.icon_glyph)
-        pick = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
-        pick.connect("clicked", lambda _b: self.pick_icon())
-        icon_row.add_suffix(pick)
-        rm = Gtk.Button(icon_name="edit-clear-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="No icon")
-        rm.connect("clicked", lambda _b: (self.set_field("icon", ""), self.icon_glyph.set_label("")))
-        icon_row.add_suffix(rm)
-        look.add(icon_row)
+        if not spec.get("stat"):
+            icon_row = Adw.ActionRow(title="Icon", subtitle="Any Nerd Font icon")
+            self.icon_glyph = Gtk.Label(label=spec.get("icon", ""), css_classes=["glyph"])
+            icon_row.add_suffix(self.icon_glyph)
+            pick = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
+            pick.connect("clicked", lambda _b: self.pick_icon())
+            icon_row.add_suffix(pick)
+            rm = Gtk.Button(icon_name="edit-clear-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="No icon")
+            rm.connect("clicked", lambda _b: (self.set_field("icon", ""), self.icon_glyph.set_label("")))
+            icon_row.add_suffix(rm)
+            look.add(icon_row)
 
-        image_row = Adw.ActionRow(title="Image", use_markup=False, subtitle=spec.get("image") or "Instead of an icon: a PNG/JPEG")
-        choose = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
-        choose.connect("clicked", lambda _b: self.pick_file("Key image", ["image/png", "image/jpeg", "image/webp"],
-                                                           lambda path: (self.set_field("image", path), self.build_key_page())))
-        image_row.add_suffix(choose)
-        rm = Gtk.Button(icon_name="edit-clear-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="No image")
-        rm.connect("clicked", lambda _b: (self.set_field("image", ""), self.build_key_page()))
-        image_row.add_suffix(rm)
-        look.add(image_row)
+            image_row = Adw.ActionRow(title="Image", use_markup=False,
+                                      subtitle=spec.get("image") or "A PNG, JPEG, WebP, or GIF. An animation plays on the key")
+            choose = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
+            choose.connect("clicked", lambda _b: self.pick_file(
+                "Key image", ["image/png", "image/jpeg", "image/webp", "image/gif"],
+                lambda path: (self.set_field("image", path), self.build_key_page())))
+            image_row.add_suffix(choose)
+            rm = Gtk.Button(icon_name="edit-clear-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="No image")
+            rm.connect("clicked", lambda _b: (self.set_field("image", ""), self.build_key_page()))
+            image_row.add_suffix(rm)
+            look.add(image_row)
 
         for field, title, default in (("fg", "Text and icon colour", "fg"), ("bg", "Background", "key_bg"), ("border", "Border", "border")):
             look.add(self.colour_row(title, spec.get(field), lambda v, f=field: self.set_field(f, v), default))
@@ -1075,7 +1124,20 @@ class Window(Adw.ApplicationWindow):
         pg.add(sp)
 
     def set_theme(self, name):
+        src = self.model._follow_source(self.profile)
+        # Picking the theme already on screen keeps its colour tweaks, so the
+        # keys don't jump back to that theme's stock palette.
+        if src and name == self.model.theme_name_for(self.profile):
+            followed = self.model.theme_for(src)
+            base = self.model.themes.get(name, gd.THEME_DEFAULTS)
+            pinned = dict(self.data.get("theme_overrides") or {})
+            for field in THEME_COLOURS:
+                if followed.get(field) != base.get(field):
+                    pinned.setdefault(field, followed[field])
+            if pinned:
+                self.data["theme_overrides"] = pinned
         self.data["theme"] = name
+        self.data.pop("follow_theme", None)
         self.changed_profile()
         self.build_look_page()
 

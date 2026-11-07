@@ -20,7 +20,8 @@
 # An empty {} leaves a key blank. Each key takes a look and an action:
 #
 #   look:    label = "text"      icon = "\U000F0XXX" (any Nerd Font glyph)
-#            image = "icons/x.png" (relative to this folder)
+#            image = "icons/x.png" (relative to this folder; a GIF, APNG, or
+#                                    animated WebP plays on the key)
 #            fg / bg / border = "#rrggbb", or a theme colour: "accent", "dim", ...
 #   action:  key     = "KP7"                 a single key, held while you hold it
 #            keys    = "SUPER+SHIFT+S"       a shortcut

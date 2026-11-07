@@ -10,7 +10,7 @@ Windows and macOS, so this project takes its place.
 
 📖 **[Read the wiki](https://github.com/NLMP-DDHS/galleon-deck/wiki)** for a full guide to the app, config files and troubleshooting.
 
-- **Profiles and pages** of 12 keys, like Elgato's app: icons, labels, images, colours.
+- **Profiles and pages** of 12 keys, like Elgato's app: icons, labels, images, animated GIFs, colours.
 - **Folders:** a key opens another set of 12 keys. The top-left key steps back;
   hold it for a second to return to the top. Double-click the folder in the app to edit inside it.
 - **Key actions:** numpad keys, any key or shortcut, run a command (with an optional ✓/✗
@@ -110,7 +110,8 @@ The [wiki](https://github.com/NLMP-DDHS/galleon-deck/wiki) covers every panel, k
 Open **Galleon Deck** from your app menu, or run `galleon-deck-config`:
 
 - **Key:** click a key in the preview to change its label, icon (a searchable picker
-  with 10,000+ icons), image, colours, and what it does. Drag keys to rearrange them.
+  with 10,000+ icons), image (PNG, JPEG, WebP, or an animated GIF), colours, and what
+  it does. Drag keys to rearrange them. A GIF plays in the preview and on the deck.
 - **Look:** pick a theme, generate one from your wallpaper, or tweak single colours.
 - **Settings:** brightness, dial volume step, clock, boot animation, and auto-switch rules.
 - **Profiles and pages:** the menus next to them add, rename, reorder, delete, and
