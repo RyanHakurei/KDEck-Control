@@ -110,7 +110,11 @@ Open **Galleon Deck** from your app menu, or run `galleon-deck-config`:
   with 10,000+ icons), image, colours, and what it does. Drag keys to rearrange them.
 - **Look:** pick a theme, generate one from your wallpaper, or tweak single colours.
 - **Settings:** brightness, dial volume step, clock, boot animation, and auto-switch rules.
-- **Profiles and pages:** the menus next to them add, rename, reorder and delete.
+- **Profiles and pages:** the menus next to them add, rename, reorder, delete, and
+  import an official Stream Deck profile (`.streamDeckProfile`). Titles, pictures,
+  hotkeys, websites, open, media, and page changes come across. A plugin key keeps
+  its title and picture; assign what it does on that key. From a terminal:
+  `galleon-deck import ~/Downloads/name.streamDeckProfile`.
 - **Add-ons:** **Install from file…** takes a downloaded add-on package (`.tar.gz`).
   The tab then upgrades and removes add-ons and runs their tools, like syncing a
   game's keybinds. From a terminal: `galleon-addon install ~/Downloads/star-citizen-1.0.0.tar.gz`,

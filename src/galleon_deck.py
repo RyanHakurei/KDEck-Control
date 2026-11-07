@@ -45,7 +45,7 @@ except ModuleNotFoundError:  # Python 3.10
 
 import evdev
 from evdev import ecodes
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 VERSION = "1.3.0"  # add-ons can require a minimum version
 VID, PID = "00001B1C", "00002B18"
@@ -400,15 +400,32 @@ def render_key(spec, theme, pressed=False):
     d = ImageDraw.Draw(img)
     if not spec:
         return img
-    bw = theme["border_width"]
-    draw_frame(d, [bw, bw, KEY_PX - 1 - bw, KEY_PX - 1 - bw], theme,
-               colour(spec.get("border", theme["border"]), theme), bw, tick=spec.get("border"))
     label = str(spec.get("label", ""))
     icon = spec.get("icon")
     image = spec.get("image")
+    # An imported Stream Deck picture is the whole key face. Draw it edge to
+    # edge so the theme frame and key colour do not show around it.
+    if spec.get("fill") and image:
+        try:
+            pic = Image.open(config_path(image)).convert("RGBA")
+            pic = ImageOps.fit(pic, (KEY_PX, KEY_PX), Image.Resampling.LANCZOS)
+            img.paste(pic, (0, 0), pic)
+            if label:
+                d = ImageDraw.Draw(img)
+                f = fit(d, label, theme["font"], 26, KEY_PX - 16)
+                d.text((KEY_PX // 2 + 1, KEY_PX - 21), label, font=f, fill="#000000", anchor="mm")
+                d.text((KEY_PX // 2, KEY_PX - 22), label, font=f, fill=fg, anchor="mm")
+            if pressed:
+                img = Image.eval(img, lambda v: int(v * 0.55))
+            return img
+        except OSError as e:
+            log(f"image {image}: {e}")
+    bw = theme["border_width"]
+    draw_frame(d, [bw, bw, KEY_PX - 1 - bw, KEY_PX - 1 - bw], theme,
+               colour(spec.get("border", theme["border"]), theme), bw, tick=spec.get("border"))
     if image:
         try:
-            pic = Image.open(os.path.expanduser(os.path.join(CONFIG_DIR, image))).convert("RGBA")
+            pic = Image.open(config_path(image)).convert("RGBA")
             pic.thumbnail((96, 96) if label else (124, 124))
             y = 16 if label else (KEY_PX - pic.height) // 2
             img.paste(pic, ((KEY_PX - pic.width) // 2, y), pic)
@@ -490,7 +507,47 @@ def toggle_mute():
         subprocess.run(["pactl", "set-sink-mute", "@DEFAULT_SINK@", "toggle"], timeout=2)
 
 
+def load_screen(path):
+    """A profile's top-screen image, fitted to the panel. None if it cannot be opened."""
+    if not path:
+        return None
+    try:
+        img = Image.open(config_path(path)).convert("RGB")
+        if img.size != (LCD_W, LCD_H):
+            img = ImageOps.fit(img, (LCD_W, LCD_H), Image.Resampling.LANCZOS)
+        return img
+    except OSError as e:
+        log(f"screen {path}: {e}")
+        return None
+
+
+def draw_page_dots(img, state, theme):
+    """The page dots from the clock screen, drawn on top of `img`."""
+    n, cur = state.get("page_count") or 0, state.get("page_index") or 0
+    if n < 1:
+        return img
+    accent = colour(theme.get("accent", "#ffffff"), theme)
+    dim = colour(theme.get("dim", "#888888"), theme)
+    overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(overlay)
+    for i in range(n):
+        x = LCD_W - 36 - (n - 1 - i) * 30
+        # A dark disc behind each dot keeps it readable on the picture.
+        d.ellipse([x - 12, 28, x + 12, 52], fill=(0, 0, 0, 170))
+        box = [x - 9, 31, x + 9, 49]
+        d.ellipse(box, fill=accent if i == cur else None, outline=accent if i == cur else dim, width=2)
+    out = img.convert("RGBA")
+    out.alpha_composite(overlay)
+    return out.convert("RGB")
+
+
 def render_lcd(state, theme):
+    # A profile screen image is the panel. Only the page dots are drawn over it.
+    # The clock stays for profiles without one.
+    if state.get("screen") and not state.get("error"):
+        art = load_screen(state["screen"])
+        if art is not None:
+            return draw_page_dots(art, state, theme)
     img = Image.new("RGB", (LCD_W, LCD_H), theme["bg"])
     d = ImageDraw.Draw(img)
     fam, fg, accent, dim = theme["font"], theme["fg"], theme["accent"], theme["dim"]
@@ -1092,7 +1149,7 @@ def set_top_level(path, key, value):
 
 
 def write_profile(path, profile):
-    """Write a profile file from a dict: theme, start_page, settings_page,
+    """Write a profile file from a dict: theme, start_page, logo, screen, settings_page,
     auto_switch, theme_overrides, page[]. Keeps the file's leading comment block."""
     head = []
     try:
@@ -1107,7 +1164,7 @@ def write_profile(path, profile):
     while head and not head[-1].strip():
         head.pop()
     out = head + [""] if head else []
-    for key in ("theme", "start_page", "logo"):
+    for key in ("theme", "start_page", "logo", "screen"):
         if profile.get(key):
             out.append(f"{key} = {toml_value(profile[key])}")
     if profile.get("settings_page") is False:
@@ -1438,6 +1495,7 @@ class App:
             "volume": self.volume,
             "error": self.error,
             "theme": self.prof()["theme_name"] if self.cfg else "",
+            "screen": self.prof().get("screen") if self.cfg else None,
         }
 
     def draw_lcd(self):
@@ -1475,6 +1533,10 @@ class App:
         if name == "back":
             # Pages reached with the dial leave no history; fall back to the start page.
             self.set_page(self.history.pop() if self.history else self.start_page_index(), remember=False)
+        elif name == "next":
+            self.set_page(self.page + 1, remember=False)
+        elif name == "previous":
+            self.set_page(self.page - 1, remember=False)
         elif name in names:
             self.set_page(names.index(name))
         else:
@@ -1506,14 +1568,20 @@ class App:
         hold = max(0.0, min(3.0, float(settings.get("hold", 0.5)))) / speed
         theme, rng = self.theme, random.Random()
         keys = [self.key_image(i) for i in range(KEYS)]
-        logo = load_logo(self.prof().get("logo"), theme, self.profile.upper())
+        art = load_screen(self.prof().get("screen"))
+        logo = None if art is not None else load_logo(self.prof().get("logo"), theme, self.profile.upper())
         def screen_at(done):
             screen = Image.new("RGB", (LCD_W, LCD_H), theme["bg"]).convert("RGBA")
             layer = Image.new("RGBA", (LCD_W, LCD_H), (0, 0, 0, 0))
-            layer.paste(logo, ((LCD_W - logo.width) // 2, (LCD_H - logo.height) // 2), logo)
+            if art is not None:
+                layer.paste(art, (0, 0))
+            else:
+                layer.paste(logo, ((LCD_W - logo.width) // 2, (LCD_H - logo.height) // 2), logo)
             layer.putalpha(layer.getchannel("A").point(lambda v: int(v * min(1, done * 1.6))))
             screen.alpha_composite(layer)
             screen = screen.convert("RGB")
+            if art is not None:
+                return screen
             d = ImageDraw.Draw(screen)
             if theme.get("key_style") == "hud":
                 draw_frame(d, [4, 4, LCD_W - 5, LCD_H - 5], {**theme, "radius": 28},
@@ -1530,7 +1598,10 @@ class App:
             for f in range(frames):
                 done = (f + 1) / frames
                 amount = (1 - done) ** 1.5
-                self.deck.lcd_image(jpeg(glitch(screen_at(done), rng, amount)))
+                frame = glitch(screen_at(done), rng, amount)
+                if art is not None:
+                    frame = draw_page_dots(frame, {"page_count": len(self.pages()), "page_index": self.page}, theme)
+                self.deck.lcd_image(jpeg(frame))
                 for i, img in enumerate(keys):
                     self.deck.key_image(i, jpeg(glitch(img, rng, amount)))
                 if waited(0.05 / speed):
@@ -1538,7 +1609,10 @@ class App:
             else:
                 self.draw_keys()  # keys first, so the clean logo holds alone for a beat
                 if hold:
-                    self.deck.lcd_image(jpeg(screen_at(1.0)))
+                    held = screen_at(1.0)
+                    if art is not None:
+                        held = draw_page_dots(held, {"page_count": len(self.pages()), "page_index": self.page}, theme)
+                    self.deck.lcd_image(jpeg(held))
                     waited(hold)
         except OSError as e:
             log(f"transition: {e}")
@@ -1881,6 +1955,9 @@ def deck_state():
 
 
 def main():
+    if len(sys.argv) > 1 and sys.argv[1] == "import":
+        import galleon_import
+        raise SystemExit(galleon_import.main(sys.argv[2:]))
     if len(sys.argv) > 1 and sys.argv[1] == "--version":
         print(VERSION)
         sys.exit(0)

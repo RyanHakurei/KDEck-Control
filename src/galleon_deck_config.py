@@ -21,6 +21,7 @@ except ModuleNotFoundError:  # Python 3.10
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import galleon_deck as gd  # noqa: E402
+import galleon_import  # noqa: E402
 
 import gi  # noqa: E402
 
@@ -208,6 +209,7 @@ class Window(Adw.ApplicationWindow):
         header.pack_start(self.menu_button("view-more-symbolic", "Profile actions", [
             ("New profile…", self.new_profile), ("Duplicate profile…", self.duplicate_profile),
             ("Rename profile…", self.rename_profile), ("Delete profile…", self.delete_profile),
+            ("Import Stream Deck profile…", self.import_streamdeck_profile),
             ("Start with this profile", self.make_start_profile),
         ]))
         self.status = Gtk.Label(css_classes=["dim-label"])
@@ -722,13 +724,21 @@ class Window(Adw.ApplicationWindow):
         dialog.set_child(box)
         dialog.present(self)
 
-    def pick_file(self, title, mime_types, done):
+    def pick_file(self, title, mime_types, done, patterns=()):
         dialog = Gtk.FileDialog(title=title)
         flt = Gtk.FileFilter()
+        flt.set_name(title)
         for m in mime_types:
             flt.add_mime_type(m)
+        for pattern in patterns:
+            flt.add_pattern(pattern)
         filters = Gio.ListStore.new(Gtk.FileFilter)
         filters.append(flt)
+        if patterns:
+            everything = Gtk.FileFilter()
+            everything.set_name("All files")
+            everything.add_pattern("*")
+            filters.append(everything)
         dialog.set_filters(filters)
 
         def finished(d, result):
@@ -1070,6 +1080,29 @@ class Window(Adw.ApplicationWindow):
         self.refresh_page_buttons()
         self.build_key_page()
         self.build_look_page()
+
+    def import_streamdeck_profile(self):
+        def picked(path):
+            try:
+                suggested = galleon_import.peek_name(path)
+            except (galleon_import.ProfileImportError, OSError) as e:
+                return self.toast(str(e))
+
+            def named(name):
+                try:
+                    result = galleon_import.import_profile(path, gd.CONFIG_DIR, name=name)
+                except (galleon_import.ProfileImportError, OSError) as e:
+                    return self.toast(str(e))
+                self.model.load()
+                self.profile, self.page, self.key = result.name, 0, 0
+                self.refresh_all()
+                if result.kept:
+                    self.toast(f"Imported “{result.name}”. {result.kept} plugin keys kept their title and picture")
+                else:
+                    self.toast(f"Imported “{result.name}”")
+            self.ask_text("Import Stream Deck profile", "Name for the profile:", suggested, named)
+        self.pick_file("Import a Stream Deck profile", ["application/zip", "application/octet-stream"], picked,
+                       patterns=["*.streamDeckProfile", "*.zip"])
 
     def new_profile(self, source=None):
         def done(name):
