@@ -30,4 +30,6 @@ keys = [
   { stat = "zfs-frag", label = "FRAG" },
   { stat = "zfs-io", label = "ZFS IO" },
   { stat = "zfs-data", label = "DATA" },
+  { stat = "arc", label = "ARC" },
+  { stat = "arc-hit", label = "HITS" },
 ]

@@ -27,12 +27,14 @@ STATS = (
     ("vram", "Video memory", "VRAM"),
     ("net", "Network", "NET"),
     ("io", "Disk throughput", "IO"),
-    # From the ZFS ksystemstats plugin (zfs/pool, zfs/dataset).
+    # From the ZFS ksystemstats plugin (zfs/pool, zfs/arc, zfs/dataset).
     ("zfs", "ZFS pool", "ZFS"),
     ("zfs-health", "ZFS health", "HEALTH"),
     ("zfs-frag", "ZFS fragmentation", "FRAG"),
     ("zfs-io", "ZFS throughput", "ZFS IO"),
     ("zfs-data", "ZFS dataset", "DATA"),
+    ("arc", "ARC size", "ARC"),
+    ("arc-hit", "ARC hit ratio", "HITS"),
 )
 
 
@@ -194,6 +196,7 @@ def _query():
                 ("capacity", "allocated", "size", "fragmentation", "health", "read", "write")]
         root = f"zfs/dataset/{pool}"
         ids += [f"{root}/used", f"{root}/available", f"{root}/usedPercent"]
+    ids += ["zfs/arc/size", "zfs/arc/target", "zfs/arc/hitRatio", "zfs/arc/recentHitRatio"]
     if meta:
         ids = [sensor for sensor in ids if not sensor.startswith("zfs/") or sensor in meta]
     import gi
@@ -256,6 +259,11 @@ def _zfs(get, pool):
     used = _num(get(f"zfs/dataset/{pool}/used")) if pool else None
     avail = _num(get(f"zfs/dataset/{pool}/available")) if pool else None
     data = _pct(get(f"zfs/dataset/{pool}/usedPercent")) if pool else None
+    arc = _num(get("zfs/arc/size"))
+    arc_target = _num(get("zfs/arc/target"))
+    arc_pct = None if arc is None or not arc_target else max(0.0, min(100.0, arc / arc_target * 100))
+    hit = _pct(get("zfs/arc/hitRatio"))
+    recent = _pct(get("zfs/arc/recentHitRatio"))
     return {
         "zfs": _gauge(_fmt_pct(capacity), capacity, _ratio(get(f"{base}/allocated"), get(f"{base}/size")) if base else ""),
         "zfs-health": _gauge(health or "—", None, pool),
@@ -266,6 +274,8 @@ def _zfs(get, pool):
             "sub": "write " + (_rate(get(f"{base}/write")) if base else "—"),
         },
         "zfs-data": _gauge(_fmt_pct(data), data, _ratio(used, None if used is None or avail is None else used + avail)),
+        "arc": _gauge(_fmt_pct(arc_pct), arc_pct, _ratio(arc, arc_target)),
+        "arc-hit": _gauge(_fmt_pct(hit), hit, "" if recent is None else f"now {recent:.0f}%"),
     }
 
 
