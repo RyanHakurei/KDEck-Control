@@ -8,6 +8,7 @@ Keys name a stat ("cpu", "ram", "gpu", ...) and are painted by the deck with
 whatever theme is already selected. Nothing here chooses colours.
 """
 
+import re
 import sys
 import threading
 import time
@@ -187,7 +188,7 @@ def _format(values, gpu, meta):
     vram = _pct(get(f"gpu/{gpu}/usedPercent"))
     freq_max = _limit(meta, "cpu/all/averageFrequency", _FREQ_MAX, 1000)
     out = {
-        "cpu": _gauge(_fmt_pct(cpu), cpu),
+        "cpu": _gauge(_fmt_pct(cpu), cpu, _cpu_model(get("cpu/all/name"))),
         "cpu-temp": _gauge(_fmt_temp(temp), None if temp is None else temp / _TEMP_MAX * 100),
         "cpu-freq": _gauge(_fmt_freq(freq), None if freq is None else freq / freq_max * 100),
         "ram": _gauge(_fmt_pct(ram), ram, _ratio(get("memory/physical/used"), get("memory/physical/total"))),
@@ -286,6 +287,43 @@ def _ratio(used, total):
     if used_n is None or total_n is None or total_n <= 0:
         return ""
     return f"{_fmt_bytes(used_n)} / {_fmt_bytes(total_n)}"
+
+
+_cpu_name = None
+
+
+def _cpu_model(sensor_name):
+    """A short processor name, like the GPU key's card name. KDE's sensor is
+    often just "All", so the model line in /proc/cpuinfo fills in."""
+    if isinstance(sensor_name, str):
+        text = sensor_name.strip()
+        if text and text.lower() not in ("all", "cpu") and not text.lower().startswith("core "):
+            return _short_cpu(text)
+    global _cpu_name
+    if _cpu_name is None:
+        _cpu_name = ""
+        try:
+            with open("/proc/cpuinfo") as f:
+                for line in f:
+                    if line.lower().startswith("model name"):
+                        _cpu_name = _short_cpu(line.split(":", 1)[1])
+                        break
+        except OSError:
+            _cpu_name = ""
+    return _cpu_name
+
+
+def _short_cpu(name):
+    text = name.replace("(R)", " ").replace("(TM)", " ").replace("®", " ").replace("™", " ")
+    text = " ".join(text.split())
+    match = re.search(r"((?:Core )?i[3-9]-\S+|Ryzen \d+ \S+|Core Ultra \S+)", text)
+    if match:
+        return match.group(1)[:22]
+    text = re.sub(r"\b\d+(?:st|nd|rd|th) Gen\b", "", text)
+    for prefix in ("Intel ", "AMD "):
+        if text.startswith(prefix):
+            text = text[len(prefix):]
+    return text.strip()[:22]
 
 
 def _short_gpu(name):
