@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=Galleon Deck
+GenericName=Stream Deck configurator
+Comment=Profiles, pages, and keys for the Corsair Galleon 100 SD
+Exec=galleon-deck-config
+Icon=input-keyboard
+Type=Application
+Categories=Qt;KDE;Utility;
+Terminal=false
+StartupNotify=true
