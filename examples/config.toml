@@ -30,7 +30,7 @@
 #            page    = "apps" | "back"       switch page
 #            profile = "gaming"              switch profile
 #            stat    = "cpu"                 a live KDE System Monitor reading
-#                                            (cpu, ram, gpu, vram, disk, net, …).
+#                                            (cpu, ram, gpu, vram, disk, net, zfs, …).
 #                                            Colours follow this profile's theme.
 #                                            Another action on the same key still
 #                                            runs when the key is pressed.

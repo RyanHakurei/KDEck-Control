@@ -21,3 +21,13 @@ keys = [
   { stat = "net", label = "NET" },
   { stat = "io", label = "IO" },
 ]
+
+[[page]]
+name = "ZFS"
+keys = [
+  { stat = "zfs", label = "ZFS" },
+  { stat = "zfs-health", label = "HEALTH" },
+  { stat = "zfs-frag", label = "FRAG" },
+  { stat = "zfs-io", label = "ZFS IO" },
+  { stat = "zfs-data", label = "DATA" },
+]

@@ -27,6 +27,12 @@ STATS = (
     ("vram", "Video memory", "VRAM"),
     ("net", "Network", "NET"),
     ("io", "Disk throughput", "IO"),
+    # From the ZFS ksystemstats plugin (zfs/pool, zfs/dataset).
+    ("zfs", "ZFS pool", "ZFS"),
+    ("zfs-health", "ZFS health", "HEALTH"),
+    ("zfs-frag", "ZFS fragmentation", "FRAG"),
+    ("zfs-io", "ZFS throughput", "ZFS IO"),
+    ("zfs-data", "ZFS dataset", "DATA"),
 )
 
 
@@ -50,6 +56,7 @@ _state = {
     "meta": None,
     "meta_at": 0.0,
     "gpu": "gpu0",
+    "pool": "",
     "data": None,
     "at": 0.0,
     "warned": False,
@@ -116,6 +123,7 @@ def _meta():
     _state["meta"] = meta
     _state["meta_at"] = now
     _state["gpu"] = _pick_gpu(meta)
+    _state["pool"] = _pick_pool(meta)
     return meta
 
 
@@ -145,6 +153,22 @@ def _pick_gpu(meta):
     return best
 
 
+def _pick_pool(meta):
+    """The largest ZFS pool. Pool names do not contain slashes, so the sensor
+    id is zfs/pool/<name>/<metric>."""
+    best, score = "", -1.0
+    names = set()
+    for sensor in meta or {}:
+        parts = sensor.split("/")
+        if len(parts) == 4 and parts[0] == "zfs" and parts[1] == "pool":
+            names.add(parts[2])
+    for name in sorted(names):
+        score_n = max(_meta_max(meta, f"zfs/pool/{name}/size"), _meta_max(meta, f"zfs/pool/{name}/allocated"))
+        if score_n > score:
+            best, score = name, score_n
+    return best
+
+
 def _query():
     gpu = _state.get("gpu") or "gpu0"
     meta = None
@@ -163,16 +187,25 @@ def _query():
         f"gpu/{gpu}/usage", f"gpu/{gpu}/temperature", f"gpu/{gpu}/power", f"gpu/{gpu}/name",
         f"gpu/{gpu}/usedVram", f"gpu/{gpu}/totalVram", f"gpu/{gpu}/usedPercent",
     ]
+    pool = _state.get("pool") or ""
+    if pool:
+        base = f"zfs/pool/{pool}"
+        ids += [f"{base}/{name}" for name in
+                ("capacity", "allocated", "size", "fragmentation", "health", "read", "write")]
+        root = f"zfs/dataset/{pool}"
+        ids += [f"{root}/used", f"{root}/available", f"{root}/usedPercent"]
+    if meta:
+        ids = [sensor for sensor in ids if not sensor.startswith("zfs/") or sensor in meta]
     import gi
     gi.require_version("GLib", "2.0")
     from gi.repository import GLib
     values = {}
     for sensor, value in _call("sensorData", GLib.Variant("(as)", (ids,))):
         values[sensor] = value
-    return _format(values, gpu, meta)
+    return _format(values, gpu, _state.get("pool") or "", meta)
 
 
-def _format(values, gpu, meta):
+def _format(values, gpu, pool, meta):
     def get(sensor):
         return values.get(sensor)
 
@@ -209,7 +242,31 @@ def _format(values, gpu, meta):
             "sub": "write " + _rate(get("disk/all/write")),
         },
     }
+    out.update(_zfs(get, pool))
     return out
+
+
+def _zfs(get, pool):
+    """Readings from the ZFS ksystemstats plugin. Absent sensors stay blank."""
+    base = f"zfs/pool/{pool}" if pool else ""
+    capacity = _pct(get(f"{base}/capacity")) if base else None
+    frag = _pct(get(f"{base}/fragmentation")) if base else None
+    health = get(f"{base}/health") if base else None
+    health = health.strip() if isinstance(health, str) else ""
+    used = _num(get(f"zfs/dataset/{pool}/used")) if pool else None
+    avail = _num(get(f"zfs/dataset/{pool}/available")) if pool else None
+    data = _pct(get(f"zfs/dataset/{pool}/usedPercent")) if pool else None
+    return {
+        "zfs": _gauge(_fmt_pct(capacity), capacity, _ratio(get(f"{base}/allocated"), get(f"{base}/size")) if base else ""),
+        "zfs-health": _gauge(health or "—", None, pool),
+        "zfs-frag": _gauge(_fmt_pct(frag), frag, pool),
+        "zfs-io": {
+            "value": _rate(get(f"{base}/read")) if base else "—",
+            "bar": None,
+            "sub": "write " + (_rate(get(f"{base}/write")) if base else "—"),
+        },
+        "zfs-data": _gauge(_fmt_pct(data), data, _ratio(used, None if used is None or avail is None else used + avail)),
+    }
 
 
 def _gauge(value, percent, sub=""):
