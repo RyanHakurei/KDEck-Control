@@ -1,0 +1,4 @@
+title = "System Stats"
+version = "1.0.0"
+requires = "1.3.0"
+description = "CPU, memory, GPU, disk and network from KDE System Monitor. Keys use the theme you have selected."

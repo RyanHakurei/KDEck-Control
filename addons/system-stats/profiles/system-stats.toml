@@ -1,0 +1,23 @@
+# Live readings from KDE System Monitor (ksystemstats).
+# follow_theme keeps these keys on the start profile's theme and colour tweaks.
+# Pick a theme under Look, or on the deck's settings page, to give this profile its own.
+
+follow_theme = true
+start_page = "Stats"
+
+[[page]]
+name = "Stats"
+keys = [
+  { stat = "cpu", label = "CPU" },
+  { stat = "cpu-temp", label = "CPU °C" },
+  { stat = "cpu-freq", label = "CPU GHz" },
+  { stat = "ram", label = "RAM" },
+  { stat = "swap", label = "SWAP" },
+  { stat = "disk", label = "DISK" },
+  { stat = "gpu", label = "GPU" },
+  { stat = "gpu-temp", label = "GPU °C" },
+  { stat = "gpu-power", label = "POWER" },
+  { stat = "vram", label = "VRAM" },
+  { stat = "net", label = "NET" },
+  { stat = "io", label = "IO" },
+]

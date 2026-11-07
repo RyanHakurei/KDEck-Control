@@ -50,6 +50,8 @@ import evdev
 from evdev import ecodes
 from PIL import Image, ImageDraw, ImageFont, ImageOps
 
+import galleon_stats
+
 VERSION = "1.3.0"  # add-ons can require a minimum version
 VID, PID = "00001B1C", "00002B18"
 KEYS = 12
@@ -394,7 +396,47 @@ def draw_frame(d, box, theme, outline, width, tick=None):
     d.line([(x0, y1 - arm), (x0, y1), (x0 + arm, y1)], fill=tick, width=width + 1, joint="curve")
 
 
+def render_stat_key(spec, theme, pressed=False):
+    """A live sensor on a key. Colours, font and frame all come from `theme`,
+    so the key matches whichever theme the profile is using."""
+    bg = colour(spec.get("bg", theme["key_bg"]), theme)
+    fg = colour(spec.get("fg", theme["fg"]), theme)
+    dim = colour(theme.get("dim", fg), theme)
+    accent = colour(theme.get("accent", fg), theme)
+    if pressed:
+        bg, fg = fg, bg
+    img = Image.new("RGB", (KEY_PX, KEY_PX), bg)
+    d = ImageDraw.Draw(img)
+    bw = theme["border_width"]
+    draw_frame(d, [bw, bw, KEY_PX - 1 - bw, KEY_PX - 1 - bw], theme,
+               colour(spec.get("border", theme["border"]), theme), bw, tick=spec.get("border"))
+    info = galleon_stats.reading(str(spec.get("stat") or ""))
+    label = str(spec.get("label") or "")
+    fam = theme["font"]
+    bar = info.get("bar")
+    has_bar = isinstance(bar, (int, float))
+    label_y, value_y, sub_y = (30, 74, 108) if has_bar else (46, 88, 122)
+    if label:
+        d.text((KEY_PX // 2, label_y), label, font=fit(d, label, fam, 20, KEY_PX - 24), fill=dim, anchor="mm")
+    value = str(info.get("value") or "—")
+    d.text((KEY_PX // 2, value_y), value, font=fit(d, value, fam, 48, KEY_PX - 28), fill=fg, anchor="mm")
+    sub = str(info.get("sub") or "")
+    if sub:
+        d.text((KEY_PX // 2, sub_y), sub, font=fit(d, sub, fam, 16, KEY_PX - 20), fill=dim, anchor="mm")
+    if has_bar:
+        x0, x1, y0, y1 = 18, KEY_PX - 18, 128, 146
+        radius = 0 if theme.get("key_style") == "hud" else 9
+        d.rounded_rectangle([x0, y0, x1, y1], radius=radius, outline=dim, width=2)
+        fill_w = int((x1 - x0 - 6) * max(0.0, min(1.0, float(bar))))
+        if fill_w > 0:
+            d.rounded_rectangle([x0 + 3, y0 + 3, x0 + 3 + fill_w, y1 - 3],
+                                radius=0 if radius == 0 else radius * 2 // 3, fill=accent)
+    return img
+
+
 def render_key(spec, theme, pressed=False):
+    if spec.get("stat"):
+        return render_stat_key(spec, theme, pressed)
     bg = colour(spec.get("bg", theme["key_bg"]), theme)
     fg = colour(spec.get("fg", theme["fg"]), theme)
     if pressed:
@@ -1356,6 +1398,9 @@ def write_profile(path, profile):
             out.append(f"{key} = {toml_value(profile[key])}")
     if profile.get("settings_page") is False:
         out.append("settings_page = false")
+    # A profile with no theme of its own keeps using the start profile's theme.
+    if profile.get("follow_theme") and not profile.get("theme"):
+        out.append(f"follow_theme = {toml_value(profile['follow_theme'])}")
     if profile.get("auto_switch"):
         out.append(f"auto_switch = {toml_value(profile['auto_switch'], multiline=True)}")
     if profile.get("theme_overrides"):
@@ -1425,13 +1470,11 @@ def load_config():
                 re.compile(rule.get("title", ""))
             except (re.error, AttributeError) as e:
                 raise ValueError(f"profiles/{name}.toml: auto_switch rule {rule!r}: {e}") from None
-        theme_name = prof.get("theme", DEFAULT_THEME)
-        if theme_name not in themes:
-            raise ValueError(f"profiles/{name}.toml: unknown theme {theme_name!r} (have: {', '.join(themes)})")
+        if prof.get("theme") and prof["theme"] not in themes:
+            raise ValueError(f"profiles/{name}.toml: unknown theme {prof['theme']!r} (have: {', '.join(themes)})")
         if prof.get("settings_page", True):
             prof["page"].append({"name": "settings", "keys": [{}] * KEYS, "settings": True})
-        prof.update(name=name, path=path, theme_name=theme_name,
-                    theme={**themes[theme_name], **prof.get("theme_overrides", {})})
+        prof.update(name=name, path=path)
         profiles[name] = prof
     if not profiles:
         raise ValueError("no profiles in profiles/*.toml")
@@ -1440,8 +1483,47 @@ def load_config():
             raise ValueError(f"auto_switch rule points at unknown profile {rule.get('profile')!r}")
         re.compile(rule.get("class", ""))
         re.compile(rule.get("title", ""))
+    _apply_profile_themes(profiles, themes, cfg.get("start_profile"))
     cfg.update(profiles=profiles, themes=themes, switch_rules=switch_rules(cfg, profiles))
     return cfg
+
+
+def _apply_profile_themes(profiles, themes, start):
+    """Fill each profile's theme dict. `follow_theme` with no theme of its own
+    uses the start profile's theme, including that profile's colour tweaks,
+    so a stats page tracks the theme the deck is already using."""
+    def bind(prof, theme_name, base):
+        prof["theme_name"] = theme_name
+        prof["theme"] = {**base, **prof.get("theme_overrides", {})}
+
+    pending = []
+    for name, prof in profiles.items():
+        if prof.get("follow_theme") and not prof.get("theme"):
+            pending.append(name)
+        else:
+            theme_name = prof.get("theme", DEFAULT_THEME)
+            bind(prof, theme_name, themes.get(theme_name, THEME_DEFAULTS))
+    for _ in range(len(pending)):
+        later = []
+        for name in pending:
+            prof = profiles[name]
+            follow = prof["follow_theme"]
+            src_name = follow if isinstance(follow, str) else start
+            src = profiles.get(src_name) if src_name and src_name != name else None
+            if src and "theme" in src:
+                prof["theme_name"] = src["theme_name"]
+                prof["theme"] = {**src["theme"], **prof.get("theme_overrides", {})}
+            elif src is not None and "theme" not in src:
+                later.append(name)
+            else:
+                bind(prof, DEFAULT_THEME, themes.get(DEFAULT_THEME, THEME_DEFAULTS))
+        if not later:
+            return
+        if len(later) == len(pending):
+            break
+        pending = later
+    for name in pending:  # a follow loop, or a source that never resolved
+        bind(profiles[name], DEFAULT_THEME, themes.get(DEFAULT_THEME, THEME_DEFAULTS))
 
 
 def switch_rules(cfg, profiles):
@@ -1567,6 +1649,7 @@ class App:
         self.dial_down = [False, False]
         self.dial_turned = [False, False]
         self.last_lcd = None
+        self.last_stats = None
         self.lcd_dirty = True
         self.volume = (None, False)
         self.running = True
@@ -1669,6 +1752,34 @@ class App:
     def draw_keys(self):
         for i in range(KEYS):
             self.draw_key(i)
+        self.last_stats = self._stat_signature()
+
+    def _stat_signature(self):
+        """What a stat key is showing, so the one-second tick can skip an unchanged key."""
+        theme = self.theme
+        out = []
+        for i, spec in enumerate(self.keys()):
+            stat = spec.get("stat")
+            if not stat:
+                continue
+            info = galleon_stats.reading(stat)
+            bar = info.get("bar")
+            bar = None if not isinstance(bar, (int, float)) else round(float(bar), 2)
+            out.append((i, stat, info.get("value"), info.get("sub"), bar,
+                        theme.get("fg"), theme.get("accent"), theme.get("key_bg"), theme.get("font")))
+        return tuple(out)
+
+    def draw_stat_keys(self):
+        """Repaint sensor keys when their reading or the profile theme changed."""
+        if not self.deck or not self.cfg:
+            return
+        signature = self._stat_signature()
+        if signature == self.last_stats:
+            return
+        self.last_stats = signature
+        for i, spec in enumerate(self.keys()):
+            if spec.get("stat") and i not in self.held:
+                self.draw_key(i)
 
     def lcd_state(self):
         now = time.localtime()
@@ -1806,8 +1917,20 @@ class App:
         self.last_lcd, self.lcd_dirty = None, True
 
     def set_theme(self, name):
-        """Persist the theme into the profile file; the reload applies it."""
-        set_top_level(self.prof()["path"], "theme", name)
+        """Persist the theme into the profile file; the reload applies it.
+
+        A profile that was following another keeps the colours on screen when
+        the theme you pick is that same one, colour tweaks included."""
+        path = self.prof()["path"]
+        prof = self.prof()
+        if prof.get("follow_theme") and isinstance(prof.get("theme"), dict) and name == prof.get("theme_name"):
+            base = self.cfg["themes"].get(name, THEME_DEFAULTS)
+            for field in ("bg", "key_bg", "fg", "accent", "frame", "dim", "border"):
+                current = prof["theme"].get(field)
+                if current and current != base.get(field):
+                    set_value(path, "theme_overrides", field, current)
+        set_top_level(path, "theme", name)
+        set_value(path, None, "follow_theme", None, remove=True)
         self.reload_if_changed()
 
     def apply_wallpaper_theme(self):
@@ -2116,6 +2239,7 @@ class App:
                         self.reload_if_changed()
                         self.volume = volume()
                         self.draw_lcd()
+                        self.draw_stat_keys()
                     elif self.lcd_dirty:
                         self.draw_lcd()
                     self.publish_state()

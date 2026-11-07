@@ -22,6 +22,7 @@ except ModuleNotFoundError:  # Python 3.10
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
 import galleon_deck as gd  # noqa: E402
 import galleon_import  # noqa: E402
+import galleon_stats  # noqa: E402
 
 import gi  # noqa: E402
 
@@ -43,6 +44,7 @@ ACTIONS = [  # (label, spec key)
     ("Media control", "media"),
     ("Go to page", "page"),
     ("Switch profile", "profile"),
+    ("System stat", "stat"),
 ]
 MEDIA = ["play-pause", "next", "previous", "stop"]
 COLOUR_CHOICES = ["Theme default", "fg", "accent", "frame", "dim", "border", "key_bg", "bg", "Custom"]
@@ -154,10 +156,42 @@ class Model:
         self.themes = gd.all_themes()
         self.mtime = gd.config_mtime()
 
-    def theme_for(self, profile):
+    def _follow_source(self, profile, seen=None):
+        """Profile whose theme this one uses, when it has follow_theme and no theme of its own."""
+        seen = set(seen or ())
+        if profile in seen or profile not in self.profiles:
+            return None
         data = self.profiles[profile]["data"]
-        name = data.get("theme", gd.DEFAULT_THEME)
-        return {**self.themes.get(name, gd.THEME_DEFAULTS), **data.get("theme_overrides", {})}
+        if data.get("theme") or not data.get("follow_theme"):
+            return None
+        src = data["follow_theme"] if isinstance(data["follow_theme"], str) else self.config.get("start_profile")
+        if not src or src == profile or src not in self.profiles:
+            return None
+        target = self.profiles[src]["data"]
+        if target.get("theme") or not target.get("follow_theme"):
+            return src
+        seen.add(profile)
+        return self._follow_source(src, seen)
+
+    def theme_name_for(self, profile):
+        src = self._follow_source(profile)
+        if src:
+            return self.theme_name_for(src)
+        return self.profiles[profile]["data"].get("theme", gd.DEFAULT_THEME)
+
+    def theme_for(self, profile, seen=None):
+        seen = set(seen or ())
+        if profile in seen or profile not in self.profiles:
+            return dict(gd.THEME_DEFAULTS)
+        seen.add(profile)
+        data = self.profiles[profile]["data"]
+        src = self._follow_source(profile)
+        if src and src not in seen:
+            base = self.theme_for(src, seen)
+        else:
+            name = data.get("theme", gd.DEFAULT_THEME)
+            base = self.themes.get(name, gd.THEME_DEFAULTS)
+        return {**base, **data.get("theme_overrides", {})}
 
     def save_profile(self, name):
         p = self.profiles[name]
@@ -182,6 +216,7 @@ class Window(Adw.ApplicationWindow):
         self.page = 0
         self.key = 0
         self.picked_kind = None  # an action chosen for a key but not filled in yet
+        self.picked_press = None  # the passthrough chosen for a stat key
         self.pending = {}  # debounce source ids
         self.icons = None
         self.addons = None  # galleon-addon list --json, fetched when the Add-ons tab is built
@@ -499,69 +534,105 @@ class Window(Adw.ApplicationWindow):
         kind.connect("notify::selected", lambda r, _p: self.set_action_kind(ACTIONS[r.get_selected()][1]))
         action.add(kind)
         k = ACTIONS[current][1]
-        if k in ("key", "keys"):
-            row = Adw.EntryRow(title="Key name, e.g. KP7, F5, ENTER" if k == "key" else "Shortcut, e.g. CTRL+SHIFT+T",
-                               text=str(spec.get(k, "")))
-            row.connect("changed", lambda r: self.set_key_field(k, r))
+        if k == "stat":
+            self.add_stat_reading(action, spec)
+            self.add_press_menu(action, spec)
+        else:
+            self.add_action_fields(action, spec, k)
+
+    def add_stat_reading(self, group, spec):
+        ids = [stat for stat, _title, _label in galleon_stats.STATS]
+        titles = [title for _stat, title, _label in galleon_stats.STATS]
+        current_stat = spec.get("stat")
+        if current_stat not in ids:
+            ids.append(current_stat)
+            titles.append(str(current_stat))
+        row = Adw.ComboRow(title="Reading", subtitle="Live from KDE System Monitor. Uses this profile's theme.",
+                           model=Gtk.StringList.new(titles), selected=ids.index(current_stat))
+        row.connect("notify::selected", lambda r, _p, ids=ids: self.set_stat(ids[r.get_selected()]))
+        group.add(row)
+
+    def add_press_menu(self, group, spec):
+        """The action that still runs when a stat key is pressed."""
+        choices = [a for a in ACTIONS if a[1] != "stat"]
+        kind = self.press_kind(spec)
+        current = next((i for i, (_, k) in enumerate(choices) if k == kind), 0)
+        row = Adw.ComboRow(title="Passthrough", subtitle="This still runs when the key is pressed.",
+                           model=Gtk.StringList.new([a for a, _ in choices]), selected=current)
+        row.connect("notify::selected", lambda r, _p, choices=choices: self.set_press_kind(choices[r.get_selected()][1]))
+        group.add(row)
+        self.add_action_fields(group, spec, choices[current][1])
+
+    def press_kind(self, spec):
+        kind = next((k for _, k in ACTIONS if k and k != "stat" and k in spec), None)
+        if kind is None and self.picked_press and self.picked_press[:3] == (self.profile, self.page, self.key):
+            kind = self.picked_press[3]
+        return kind
+
+    def add_action_fields(self, group, spec, kind):
+        if kind in ("key", "keys"):
+            row = Adw.EntryRow(title="Key name, e.g. KP7, F5, ENTER" if kind == "key" else "Shortcut, e.g. CTRL+SHIFT+T",
+                               text=str(spec.get(kind, "")))
+            row.connect("changed", lambda r, kind=kind: self.set_key_field(kind, r))
             rec = Gtk.Button(label="Record", valign=Gtk.Align.CENTER, tooltip_text="Press the key or shortcut to use")
-            rec.connect("clicked", lambda _b: self.record_key(k, row))
+            rec.connect("clicked", lambda _b, kind=kind, row=row: self.record_key(kind, row))
             row.add_suffix(rec)
-            action.add(row)
-        elif k == "repeat":
+            group.add(row)
+        elif kind == "repeat":
             row = Adw.EntryRow(title="Key or shortcut to repeat, e.g. SPACE, SHIFT+7", text=str(spec.get("repeat", "")))
             row.connect("changed", lambda r: self.set_key_field("repeat", r))
             rec = Gtk.Button(label="Record", valign=Gtk.Align.CENTER, tooltip_text="Press the key or shortcut to repeat")
-            rec.connect("clicked", lambda _b: self.record_key("repeat", row))
+            rec.connect("clicked", lambda _b, row=row: self.record_key("repeat", row))
             row.add_suffix(rec)
-            action.add(row)
+            group.add(row)
             every = Adw.SpinRow.new_with_range(20, 10000, 10)
             every.set_title("Time between presses (ms)")
             every.set_subtitle("Press the deck key once to start, again to stop")
             every.set_value(spec.get("repeat_ms", 100))
             every.connect("notify::value", lambda r, _p: self.set_field("repeat_ms", "" if int(r.get_value()) == 100 else int(r.get_value())))
-            action.add(every)
-        elif k == "sequence":
+            group.add(every)
+        elif kind == "sequence":
             seq = spec.get("sequence", "")
             row = Adw.EntryRow(title="Keys tapped in turn, e.g. UP DOWN RIGHT LEFT",
                                text=seq if isinstance(seq, str) else " ".join(seq))
             row.connect("changed", lambda r: self.set_sequence_field(r))
-            action.add(row)
+            group.add(row)
             hold = Adw.EntryRow(title="Held throughout (optional), e.g. CTRL", text=str(spec.get("hold", "")))
             hold.connect("changed", lambda r: self.set_key_field("hold", r))
             rec = Gtk.Button(label="Record", valign=Gtk.Align.CENTER, tooltip_text="Press the key to hold")
-            rec.connect("clicked", lambda _b: self.record_key("hold", hold))
+            rec.connect("clicked", lambda _b, hold=hold: self.record_key("hold", hold))
             hold.add_suffix(rec)
-            action.add(hold)
+            group.add(hold)
             step = Adw.SpinRow.new_with_range(10, 500, 5)
             step.set_title("Delay between taps (ms)")
             step.set_subtitle("Raise it if the game drops inputs")
             step.set_value(spec.get("step_ms", 40))
             step.connect("notify::value", lambda r, _p: self.set_field("step_ms", "" if int(r.get_value()) == 40 else int(r.get_value())))
-            action.add(step)
-        elif k == "exec":
+            group.add(step)
+        elif kind == "exec":
             row = Adw.EntryRow(title="Command", text=str(spec.get("exec", "")))
             row.connect("changed", lambda r: self.set_field("exec", r.get_text()))
-            action.add(row)
+            group.add(row)
             confirm = Adw.SwitchRow(title="Flash ✓ / ✗ when it finishes", active=bool(spec.get("confirm")))
             confirm.connect("notify::active", lambda r, _p: self.set_field("confirm", r.get_active() or ""))
-            action.add(confirm)
-        elif k == "media":
+            group.add(confirm)
+        elif kind == "media":
             row = Adw.ComboRow(title="Control", model=Gtk.StringList.new(MEDIA),
                                selected=MEDIA.index(spec["media"]) if spec.get("media") in MEDIA else 0)
             row.connect("notify::selected", lambda r, _p: self.set_field("media", MEDIA[r.get_selected()]))
-            action.add(row)
-        elif k == "page":
+            group.add(row)
+        elif kind == "page":
             names = [p["name"] for p in self.data["page"]] + ["next", "previous", "back"]
             row = Adw.ComboRow(title="Page", model=Gtk.StringList.new(names),
                                selected=names.index(spec["page"]) if spec.get("page") in names else 0)
-            row.connect("notify::selected", lambda r, _p: self.set_field("page", names[r.get_selected()]))
-            action.add(row)
-        elif k == "profile":
+            row.connect("notify::selected", lambda r, _p, names=names: self.set_field("page", names[r.get_selected()]))
+            group.add(row)
+        elif kind == "profile":
             names = list(self.model.profiles)
             row = Adw.ComboRow(title="Profile", model=Gtk.StringList.new(names),
                                selected=names.index(spec["profile"]) if spec.get("profile") in names else 0)
-            row.connect("notify::selected", lambda r, _p: self.set_field("profile", names[r.get_selected()]))
-            action.add(row)
+            row.connect("notify::selected", lambda r, _p, names=names: self.set_field("profile", names[r.get_selected()]))
+            group.add(row)
 
     def colour_row(self, title, value, on_change, default="fg"):
         """A dropdown of theme colours plus a custom colour button; `default` is
@@ -587,6 +658,51 @@ class Window(Adw.ApplicationWindow):
         row.add_suffix(drop)
         row.add_suffix(button)
         return row
+
+    def set_press_kind(self, kind):
+        """Set the action that runs when a stat key is pressed. The reading stays."""
+        spec = self.spec()
+        if spec is None:
+            return
+        if not spec:
+            spec = {}
+            self.pages()[self.page]["keys"][self.key] = spec
+        if kind == self.press_kind(spec):
+            return  # the menu reports its current choice while the page is built
+        self._keep_action(spec, kind, also="stat")
+        self.picked_press = (self.profile, self.page, self.key, kind)
+        self.changed_profile()
+        self.build_key_page()
+
+    def _keep_action(self, spec, kind, also=None):
+        """Drop every action except `kind` (and `also`, when a stat stays on the key)."""
+        keep = {kind, also}
+        for _, k in ACTIONS:
+            if k and k not in keep:
+                spec.pop(k, None)
+        if kind != "exec":
+            spec.pop("confirm", None)
+        if kind != "sequence":
+            spec.pop("hold", None)
+            spec.pop("step_ms", None)
+        if kind != "repeat":
+            spec.pop("repeat_ms", None)
+        defaults = {"media": "play-pause", "page": "back", "profile": next(iter(self.model.profiles))}
+        if kind and kind not in spec and kind in defaults:
+            spec[kind] = defaults[kind]
+
+    def set_stat(self, stat):
+        """Point this key at a sensor. A label that still matches the previous
+        reading's default is replaced; a label you typed stays."""
+        spec = self.spec()
+        if spec is None or spec.get("stat") == stat:
+            return
+        previous = galleon_stats.label_for(spec.get("stat"))
+        self.set_field("stat", stat)
+        spec = self.spec()
+        if spec is not None and str(spec.get("label", "")) in ("", previous):
+            self.set_field("label", galleon_stats.label_for(stat))
+        self.build_key_page()
 
     def set_field(self, field, value):
         spec = self.spec()
@@ -628,19 +744,14 @@ class Window(Adw.ApplicationWindow):
         if not spec:
             spec = {}
             self.pages()[self.page]["keys"][self.key] = spec
-        for _, k in ACTIONS:
-            if k and k != kind:
-                spec.pop(k, None)
-        if kind != "exec":
-            spec.pop("confirm", None)
-        if kind != "sequence":
-            spec.pop("hold", None)
-            spec.pop("step_ms", None)
-        if kind != "repeat":
-            spec.pop("repeat_ms", None)
-        defaults = {"media": "play-pause", "page": "back", "profile": next(iter(self.model.profiles))}
-        if kind and kind not in spec and kind in defaults:
-            spec[kind] = defaults[kind]
+        if kind == "stat":
+            # Leave whatever the key already does on press; that becomes the passthrough.
+            if not spec.get("stat"):
+                spec["stat"] = "cpu"
+                if not spec.get("label"):
+                    spec["label"] = galleon_stats.label_for("cpu")
+        else:
+            self._keep_action(spec, kind)
         self.picked_kind = (self.profile, self.page, self.key, kind)
         self.changed_profile()
         self.build_key_page()
@@ -757,11 +868,17 @@ class Window(Adw.ApplicationWindow):
         data = self.data
         themes = self.model.themes
 
-        g = Adw.PreferencesGroup(title="Theme", description=f"Used by the “{self.profile}” profile.")
+        source = self.model._follow_source(self.profile)
+        if source:
+            description = (f"Uses the {source} theme and its colour tweaks. "
+                           f"Pick a theme to give “{self.profile}” its own.")
+        else:
+            description = f"Used by the “{self.profile}” profile."
+        g = Adw.PreferencesGroup(title="Theme", description=description)
         self.add_group(page, g)
         flow = Gtk.FlowBox(selection_mode=Gtk.SelectionMode.NONE, max_children_per_line=5, min_children_per_line=3,
                            row_spacing=10, column_spacing=10, homogeneous=True)
-        current = data.get("theme", gd.DEFAULT_THEME)
+        current = self.model.theme_name_for(self.profile)
         for name, theme in themes.items():
             pic = Gtk.Picture(can_shrink=False)
             pic.set_size_request(96, 96)
@@ -788,7 +905,10 @@ class Window(Adw.ApplicationWindow):
         ov = Adw.PreferencesGroup(title="Colour tweaks", description="Change single colours of the theme for this profile only.")
         self.add_group(page, ov)
         overrides = data.get("theme_overrides", {})
-        base = themes.get(current, gd.THEME_DEFAULTS)
+        if source:
+            base = self.model.theme_for(source)
+        else:
+            base = themes.get(current, gd.THEME_DEFAULTS)
         for field in THEME_COLOURS:
             row = Adw.ActionRow(title={"bg": "Screen background", "key_bg": "Key background", "fg": "Text and icons",
                                        "accent": "Highlight", "frame": "Screen frame", "dim": "Secondary text",
