@@ -32,6 +32,9 @@ import random
 import re
 import select
 import shutil
+import urllib.error
+import urllib.parse
+import urllib.request
 import signal
 import socket
 import subprocess
@@ -541,6 +544,154 @@ def draw_page_dots(img, state, theme):
     return out.convert("RGB")
 
 
+def current_media():
+    """The track the desktop is playing, or None. Includes a local path to its cover when the player has one."""
+    if not shutil_which("playerctl"):
+        return None
+    raw = cmd_output(["playerctl", "metadata", "--format",
+                       "{{status}}\t{{artist}}\t{{title}}\t{{mpris:artUrl}}\t{{position}}\t{{mpris:length}}"])
+    parts = raw.split("\t")
+    if len(parts) < 2 or parts[0] not in ("Playing", "Paused"):
+        return None
+    status = parts[0]
+    artist = parts[1].strip() if len(parts) > 1 else ""
+    title = parts[2].strip() if len(parts) > 2 else ""
+    art_url = parts[3] if len(parts) > 3 else ""
+    info = {
+        "artist": artist,
+        "title": title,
+        "media": title or artist,
+        "media_icon": "󰐊" if status == "Playing" else "󰏤",
+    }
+    # playerctl prints position and mpris:length in microseconds.
+    position, length = _microseconds(parts[4] if len(parts) > 4 else ""), _microseconds(parts[5] if len(parts) > 5 else "")
+    if position is not None:
+        info["position"] = position // 1_000_000
+        if length:
+            info["length"] = length // 1_000_000
+    art = _art_file(art_url.strip())
+    if art:
+        info["art"] = art
+        try:
+            info["art_mtime"] = int(os.stat(art).st_mtime)
+        except OSError:
+            info.pop("art", None)
+    return info
+
+
+def _art_file(url):
+    """A local image path for an MPRIS art URL, downloading http(s) covers once."""
+    if not url:
+        return None
+    if url.startswith("file://"):
+        path = urllib.parse.unquote(url[7:])
+        return path if os.path.isfile(path) else None
+    if url.startswith("/") and os.path.isfile(url):
+        return url
+    if not url.startswith(("http://", "https://")):
+        return None
+    import hashlib
+    cache = os.path.join(os.environ.get("XDG_CACHE_HOME") or os.path.expanduser("~/.cache"), "galleon-deck")
+    try:
+        os.makedirs(cache, exist_ok=True)
+    except OSError:
+        return None
+    dest = os.path.join(cache, hashlib.sha1(url.encode()).hexdigest()[:16])
+    if os.path.isfile(dest) and os.path.getsize(dest) > 0:
+        return dest
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "galleon-deck"})
+        with urllib.request.urlopen(req, timeout=1.5) as resp:
+            data = resp.read(2_000_000)
+        if not data:
+            return None
+        with open(dest + ".tmp", "wb") as f:
+            f.write(data)
+        os.replace(dest + ".tmp", dest)
+        return dest
+    except (OSError, urllib.error.URLError, ValueError):
+        return None
+
+
+def _microseconds(text):
+    text = str(text).strip()
+    return int(text) if text.isdigit() else None
+
+
+def _track_time(seconds):
+    seconds = max(0, int(seconds))
+    hours, rest = divmod(seconds, 3600)
+    minutes, secs = divmod(rest, 60)
+    if hours:
+        return f"{hours}:{minutes:02d}:{secs:02d}"
+    return f"{minutes}:{secs:02d}"
+
+
+def draw_track_progress(d, y, bar0, bar1, time_right, position, length, fam, fg, accent, dim, hud):
+    """The volume slider's shape, directly above it. Elapsed time sits where the speaker
+    icon is, and the track length sits where the percent is."""
+    elapsed = _track_time(0 if position is None else position)
+    total = _track_time(length) if length else ""
+    label = font(fam, 26)
+    # Grow left from the bar so a longer time stays off the slider, in the speaker's slot.
+    d.text((bar0 - 8, y), elapsed, font=label, fill=accent, anchor="rm")
+    if total:
+        d.text((time_right, y), total, font=label, fill=fg, anchor="rm")
+    radius = 0 if hud else 9
+    d.rounded_rectangle([bar0, y - 9, bar1, y + 9], radius=radius, outline=dim, width=2)
+    if not length:
+        return
+    fill_w = int((bar1 - bar0 - 6) * max(0.0, min(1.0, (position or 0) / length)))
+    if fill_w > 0:
+        d.rounded_rectangle([bar0 + 3, y - 6, bar0 + 3 + fill_w, y + 6], radius=radius * 2 // 3, fill=accent)
+
+
+# Private-use slots in the installed Symbols Nerd Font. `\u` is only four
+# hex digits, so the microphone has to be the eight-digit form or Python
+# keeps a stray "0" and draws a different icon.
+_ARTIST_ICON = "\U000F0370"  # md-microphone_variant
+
+
+def _media_lines(state):
+    """Song and artist, each with its icon. A lone media string stays one line."""
+    title = str(state.get("title") or "").strip()
+    artist = str(state.get("artist") or "").strip()
+    if not title and not artist:
+        text = str(state.get("media") or "").strip()
+        return [(state.get("media_icon") or "", text)] if text else []
+    lines = []
+    if title:
+        lines.append((state.get("media_icon") or "", title))
+    if artist:
+        lines.append((_ARTIST_ICON, artist))
+    return lines
+
+
+def draw_media_lines(d, x, y, lines, max_w, fam, icon_font, fg, accent, size=22, gap=38):
+    """Left-aligned now-playing rows. `y` is the first row."""
+    icon_px = size + 8
+    for i, (icon, text) in enumerate(lines):
+        yy = y + i * gap
+        text_x = x
+        if icon:
+            d.text((x, yy), icon, font=font(icon_font, icon_px), fill=accent, anchor="lm")
+            text_x = x + icon_px + 6
+        d.text((text_x, yy), text, font=fit(d, text, fam, size, max(40, max_w - (text_x - x) - 8)), fill=fg, anchor="lm")
+
+
+def _cover(path, size, bg):
+    """Album art fitted to a square. None if the file cannot be opened."""
+    try:
+        pic = Image.open(path).convert("RGBA")
+    except OSError as e:
+        log(f"album art {path}: {e}")
+        return None
+    pic = ImageOps.fit(pic, (size, size), Image.Resampling.LANCZOS)
+    tile = Image.new("RGB", (size, size), bg)
+    tile.paste(pic, (0, 0), pic)
+    return tile
+
+
 def render_lcd(state, theme):
     # A profile screen image is the panel. Only the page dots are drawn over it.
     # The clock stays for profiles without one.
@@ -580,25 +731,61 @@ def render_lcd(state, theme):
         d.multiline_text((28, 180), "\n".join(lines[:6]), font=font(fam, 20), fill=fg, spacing=6)
         return img
 
-    d.text((LCD_W // 2, 150), state["clock"], font=font(theme["clock_font"], 110), fill=fg, anchor="mm")
-    d.text((LCD_W // 2, 232), state["date"], font=fit(d, state["date"], fam, 30, LCD_W - 60), fill=dim, anchor="mm")
+    lines = _media_lines(state)
+    cover = _cover(state["art"], 236, theme["bg"]) if state.get("art") else None
+    if cover is not None:
+        # Cover on the right. The clock, date, and track lines sit in the space to its left.
+        art_x, art_y = LCD_W - 28 - cover.width, 84
+        img.paste(cover, (art_x, art_y))
+        d.rectangle([art_x, art_y, art_x + cover.width - 1, art_y + cover.height - 1], outline=dim, width=2)
+        left, margin = art_x - 16, 28
+        max_w = left - margin
+        cx = (margin + left) // 2
+        # Each extra track row lifts the clock so the last row stays above the
+        # progress time, which is centred at y=312.
+        rows = len(lines)
+        clock_y, clock_px = ((158, 100), (140, 96), (126, 86), (114, 70))[min(rows, 3)]
+        clock_font = font(theme["clock_font"], clock_px)
+        while clock_px > 40 and d.textlength(state["clock"], font=clock_font) > max_w:
+            clock_px -= 4
+            clock_font = font(theme["clock_font"], clock_px)
+        d.text((cx, clock_y), state["clock"], font=clock_font, fill=fg, anchor="mm")
+        date_y = clock_y + clock_px // 2 + 12
+        d.text((cx, date_y), state["date"], font=fit(d, state["date"], fam, 26, max_w), fill=dim, anchor="mm")
+        if lines:
+            gap = 38
+            # Last row stays above the progress time, which is centred at y=312.
+            start = min(date_y + 36, 276 - (len(lines) - 1) * gap)
+            draw_media_lines(d, 36, start, lines, max_w, fam, theme["icon_font"], fg, accent, size=22, gap=gap)
+        vol_right, vol_bar = art_x - 16, art_x - 88
+    else:
+        rows = len(lines)
+        clock_y, clock_px = ((150, 110), (138, 100), (124, 86), (112, 72))[min(rows, 3)]
+        d.text((LCD_W // 2, clock_y), state["clock"], font=font(theme["clock_font"], clock_px), fill=fg, anchor="mm")
+        date_y = clock_y + clock_px // 2 + 14
+        d.text((LCD_W // 2, date_y), state["date"], font=fit(d, state["date"], fam, 30, LCD_W - 60), fill=dim, anchor="mm")
+        if lines:
+            gap = 38
+            start = min(date_y + 36, 276 - (len(lines) - 1) * gap)
+            draw_media_lines(d, 56, start, lines, LCD_W - 80, fam, theme["icon_font"], fg, accent, size=22, gap=gap)
+        vol_right, vol_bar = LCD_W - 40, LCD_W - 130
 
-    media = state.get("media")
-    if media:
-        f = fit(d, media, fam, 28, LCD_W - 110)
-        d.text((56, 286), state.get("media_icon", ""), font=font(theme["icon_font"], 30), fill=accent, anchor="lm")
-        d.text((96, 286), media, font=f, fill=fg, anchor="lm")
+    # Same bar as the volume slider, one gap above it. 340 is the volume row.
+    if state.get("position") is not None:
+        draw_track_progress(d, 312, 96, vol_bar, vol_right, state.get("position"), state.get("length"),
+                            fam, fg, accent, dim, theme.get("key_style") == "hud")
 
     vol, muted = state.get("volume", (None, False))
     if vol is not None:
-        x0, x1, y = 96, LCD_W - 130, 340
+        x0, y = 96, 340
+        x1 = vol_bar
         r = 0 if theme.get("key_style") == "hud" else 9
         d.text((56, y), "󰝟" if muted else "󰕾", font=font(theme["icon_font"], 30), fill=dim if muted else accent, anchor="lm")
         d.rounded_rectangle([x0, y - 9, x1, y + 9], radius=r, outline=dim, width=2)
         fill_w = int((x1 - x0 - 6) * min(vol, 100) / 100)
         if fill_w > 0:
             d.rounded_rectangle([x0 + 3, y - 6, x0 + 3 + fill_w, y + 6], radius=r * 2 // 3, fill=dim if muted else fg)
-        d.text((LCD_W - 40, y), "MUTE" if muted else f"{vol}%", font=font(fam, 26), fill=dim if muted else fg, anchor="rm")
+        d.text((vol_right, y), "MUTE" if muted else f"{vol}%", font=font(fam, 26), fill=dim if muted else fg, anchor="rm")
     return img
 
 
@@ -1500,10 +1687,9 @@ class App:
 
     def draw_lcd(self):
         state = self.lcd_state()
-        status = cmd_output(["playerctl", "status"]) if shutil_which("playerctl") else ""
-        if status in ("Playing", "Paused"):
-            state["media"] = cmd_output(["playerctl", "metadata", "--format", "{{artist}} — {{title}}"]).strip(" —")
-            state["media_icon"] = "󰐊" if status == "Playing" else "󰏤"
+        playing = current_media()
+        if playing:
+            state.update(playing)
         key = repr(sorted(state.items()))
         if key != self.last_lcd or self.lcd_dirty:
             self.deck.lcd_image(jpeg(render_lcd(state, self.theme)))
