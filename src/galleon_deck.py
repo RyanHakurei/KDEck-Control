@@ -692,6 +692,12 @@ def draw_track_progress(d, y, bar0, bar1, time_right, position, length, fam, fg,
 # hex digits, so the microphone has to be the eight-digit form or Python
 # keeps a stray "0" and draws a different icon.
 _ARTIST_ICON = "\U000F0370"  # md-microphone_variant
+# Symbols Nerd Font. This file has no num-lock or scroll-lock key glyph.
+_LOCK_ICONS = (
+    "\U000F0A9B",  # md-caps_lock
+    "\U000F03A0",  # md-numeric
+    "\U000F0E7A",  # md-arrow_up_down_bold
+)
 
 
 def _media_lines(state):
@@ -734,6 +740,135 @@ def _cover(path, size, bg):
     return tile
 
 
+def keyboard_status():
+    """Caps, num, and scroll lock, plus the keyboard's USB poll rate in Hz.
+
+    The physical keyboard wins over the deck, a YubiKey, or a virtual device.
+    """
+    groups = {}
+    root = "/sys/class/leds"
+    if os.path.isdir(root):
+        for name in os.listdir(root):
+            dev, sep, kind = name.partition("::")
+            if sep and kind in ("capslock", "numlock", "scrolllock"):
+                groups.setdefault(dev, {})[kind] = os.path.join(root, name, "brightness")
+    best = None
+    for dev, leds in groups.items():
+        if not all(k in leds for k in ("capslock", "numlock", "scrolllock")):
+            continue
+        try:
+            kname = open(f"/sys/class/input/{dev}/name").read().strip()
+        except OSError:
+            kname = ""
+        real = os.path.realpath(f"/sys/class/input/{dev}/device")
+        score = 0
+        if "/virtual/" not in real and not kname.lower().startswith("ckb"):
+            score += 2
+        if "keyboard" in kname.lower():
+            score += 4
+        if "yubi" in kname.lower():
+            score -= 3
+        if best is None or (score, kname) > (best[0], best[1]):
+            best = (score, kname, dev, leds)
+    if best is None:
+        return {"locks": None, "poll_hz": None}
+    _, _, dev, leds = best
+
+    def lit(kind):
+        try:
+            return int(open(leds[kind]).read().strip()) > 0
+        except (OSError, ValueError):
+            return False
+
+    return {
+        "locks": (lit("capslock"), lit("numlock"), lit("scrolllock")),
+        "poll_hz": _keyboard_hz(dev),
+    }
+
+
+def _keyboard_hz(dev):
+    """Host poll rate for this keyboard's boot interface, from its USB endpoint."""
+    node = os.path.realpath(f"/sys/class/input/{dev}/device")
+    usb = None
+    for _ in range(8):
+        if os.path.isfile(os.path.join(node, "speed")) and os.path.isfile(os.path.join(node, "idVendor")):
+            usb = node
+            break
+        parent = os.path.dirname(node)
+        if parent == node:
+            break
+        node = parent
+    if not usb:
+        return None
+    try:
+        speed = float(open(os.path.join(usb, "speed")).read())
+    except (OSError, ValueError):
+        return None
+    for name in os.listdir(usb):
+        iface = os.path.join(usb, name)
+        if ":" not in name or not os.path.isdir(iface):
+            continue
+        try:
+            clas = int(open(os.path.join(iface, "bInterfaceClass")).read())
+            proto = int(open(os.path.join(iface, "bInterfaceProtocol")).read())
+        except (OSError, ValueError):
+            continue
+        if clas != 3 or proto != 1:
+            continue
+        for ep in glob.glob(iface + "/ep_*"):
+            try:
+                addr = int(open(os.path.join(ep, "bEndpointAddress")).read().strip(), 16)
+                interval = int(open(os.path.join(ep, "bInterval")).read().strip(), 16)
+            except (OSError, ValueError):
+                continue
+            if addr & 0x80 and interval > 0:
+                # High speed and above count 125 µs microframes. Full speed counts milliseconds.
+                if speed >= 400:
+                    return int(8000 / (2 ** (interval - 1)))
+                return int(1000 / interval)
+    return None
+
+
+def _draw_keyboard_status(d, state, theme, fam, fg, accent, dim):
+    """Lock chips and poll rate, right-aligned just left of the page dots.
+    Returns how wide the title may be."""
+    locks, hz = state.get("locks"), state.get("poll_hz")
+    n = state.get("page_count") or 0
+    dots_left = (LCD_W - 36 - (max(n, 1) - 1) * 30 - 9) if n else LCD_W - 28
+    if not locks and not hz:
+        return dots_left - 16
+    chip_font = font(theme.get("icon_font") or "Symbols Nerd Font", 16)
+    pieces = []
+    if locks:
+        for label, lit in zip(_LOCK_ICONS, locks):
+            pieces.append(max(22, int(d.textlength(label, font=chip_font)) + 10))
+    hz_text = f"{hz / 1000:g} kHz" if hz else ""
+    hz_font = font(fam, 16)
+    hz_w = int(d.textlength(hz_text, font=hz_font)) if hz_text else 0
+    gap = 6
+    total = sum(pieces) + gap * max(0, len(pieces) - 1)
+    if hz_w:
+        total += (8 if pieces else 0) + hz_w
+    x = dots_left - 14 - total
+    y = 40
+    radius = 0 if theme.get("key_style") == "hud" else 5
+    bg = theme["bg"]
+    for label, lit, width in zip(_LOCK_ICONS, locks or (), pieces):
+        box = [x, y - 10, x + width, y + 10]
+        if lit:
+            d.rounded_rectangle(box, radius=radius, fill=accent)
+            d.text((x + width / 2, y), label, font=chip_font, fill=bg, anchor="mm")
+        else:
+            d.rounded_rectangle(box, radius=radius, outline=dim, width=1)
+            d.text((x + width / 2, y), label, font=chip_font, fill=dim, anchor="mm")
+        x += width + gap
+    if hz_text:
+        if pieces:
+            x += 2
+        d.text((x, y), hz_text, font=hz_font, fill=fg, anchor="lm")
+    return dots_left - 14 - total - 12
+
+
 def render_lcd(state, theme):
     # A profile screen image is the panel. Only the page dots are drawn over it.
     # The clock stays for profiles without one.
@@ -752,7 +887,8 @@ def render_lcd(state, theme):
 
     # Profile / page and page position, like the Stream Deck's page indicator.
     head = f"{state['profile']} / {state['page']}".upper()
-    d.text((28, 40), head, font=fit(d, head, fam, 32, 480), fill=accent, anchor="lm")
+    title_w = _draw_keyboard_status(d, state, theme, fam, fg, accent, dim) - 28
+    d.text((28, 40), head, font=fit(d, head, fam, 32, max(80, title_w)), fill=accent, anchor="lm")
     n, cur = state["page_count"], state["page_index"]
     for i in range(n):
         x = LCD_W - 36 - (n - 1 - i) * 30
@@ -1794,6 +1930,7 @@ class App:
             "error": self.error,
             "theme": self.prof()["theme_name"] if self.cfg else "",
             "screen": self.prof().get("screen") if self.cfg else None,
+            **keyboard_status(),
         }
 
     def draw_lcd(self):
