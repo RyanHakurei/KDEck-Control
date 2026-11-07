@@ -43,6 +43,8 @@ ACTIONS = [  # (label, spec key)
     ("Run a command", "exec"),
     ("Media control", "media"),
     ("Go to page", "page"),
+    ("Folder", "folder"),
+    ("Back", "back"),
     ("Switch profile", "profile"),
     ("System stat", "stat"),
 ]
@@ -150,8 +152,7 @@ class Model:
                 with open(full, "rb") as f:
                     data = tomllib.load(f)
                 for page in data.setdefault("page", []):
-                    keys = page.setdefault("keys", [])
-                    page["keys"] = (keys + [{}] * gd.KEYS)[:gd.KEYS]
+                    gd.pad_key_slots(page.setdefault("keys", []))
                 self.profiles[path[:-5]] = {"path": full, "data": data}
         self.themes = gd.all_themes()
         self.mtime = gd.config_mtime()
@@ -215,6 +216,8 @@ class Window(Adw.ApplicationWindow):
         self.profile = self.model.config.get("start_profile") if self.model.config.get("start_profile") in self.model.profiles else next(iter(self.model.profiles))
         self.page = 0
         self.key = 0
+        self.folder_path = []  # indexes from the page key down into the folder being edited
+        self._skip_select = None  # a double-click opens the folder; the click after it must not select
         self.picked_kind = None  # an action chosen for a key but not filled in yet
         self.picked_press = None  # the passthrough chosen for a stat key
         self.pending = {}  # debounce source ids
@@ -344,9 +347,30 @@ class Window(Adw.ApplicationWindow):
             pages.append({"name": "settings", "settings": True, "keys": [{}] * gd.KEYS})
         return pages
 
-    def spec(self):
+    def resolved_folder(self, folder):
+        """The part of a folder path that still exists on the current page."""
         page = self.pages()[self.page]
-        return None if page.get("settings") else page["keys"][self.key]
+        if page.get("settings") or not isinstance(folder, list):
+            return []
+        _keys, path = gd.walk_folders(page["keys"], folder)
+        return path
+
+    def slot_list(self):
+        """The 12 keys on screen, or None on the generated settings page."""
+        page = self.pages()[self.page]
+        if page.get("settings"):
+            self.folder_path = []
+            return None
+        keys, path = gd.walk_folders(page["keys"], self.folder_path)
+        self.folder_path = path
+        return keys
+
+    def spec(self):
+        keys = self.slot_list()
+        return None if keys is None else keys[self.key]
+
+    def _slot(self):
+        return (self.profile, self.page, tuple(self.folder_path), self.key)
 
     def changed_profile(self):
         """The current profile was edited: redraw and save soon."""
@@ -367,6 +391,8 @@ class Window(Adw.ApplicationWindow):
             ("Make start page", self.make_start_page),
         ]))
         box.append(bar)
+        self.folder_buttons = Gtk.Box(css_classes=["linked"], halign=Gtk.Align.CENTER)
+        box.append(self.folder_buttons)
 
         deck = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=14, css_classes=["deck"])
         self.lcd = Gtk.Picture(css_classes=["deck-lcd"], can_shrink=False)
@@ -379,6 +405,9 @@ class Window(Adw.ApplicationWindow):
             pic.set_size_request(KEY_PREVIEW, KEY_PREVIEW)
             button = Gtk.Button(child=pic, css_classes=["deck-key"], tooltip_text=f"Key {i + 1}")
             button.connect("clicked", lambda _b, i=i: self.select_key(i))
+            clicks = Gtk.GestureClick()
+            clicks.connect("pressed", lambda _g, n, _x, _y, i=i: n >= 2 and self.open_folder_at(i))
+            button.add_controller(clicks)
             drag = Gtk.DragSource(actions=Gdk.DragAction.MOVE)
             drag.connect("prepare", lambda _s, _x, _y, i=i: Gdk.ContentProvider.new_for_value(GObject.Value(GObject.TYPE_INT, i)))
             drag.connect("drag-begin", lambda s, _d, p=pic: s.set_icon(Gtk.WidgetPaintable.new(p), 40, 40))
@@ -391,7 +420,8 @@ class Window(Adw.ApplicationWindow):
             self.key_pictures.append(pic)
         deck.append(grid)
         box.append(deck)
-        box.append(Gtk.Label(label="Click a key to edit it; drag keys to rearrange them.", css_classes=["dim-label"]))
+        box.append(Gtk.Label(label="Click a key to edit it. Double-click a folder to open it. Drag keys to rearrange them.",
+                             css_classes=["dim-label"]))
         return box
 
     def refresh_deck(self):
@@ -399,7 +429,8 @@ class Window(Adw.ApplicationWindow):
         self.page = min(self.page, len(pages) - 1)
         theme = self.model.theme_for(self.profile)
         page = pages[self.page]
-        if page.get("settings"):
+        slots = self.slot_list()
+        if slots is None:
             try:
                 fake = object.__new__(gd.App)
                 fake.repeating = {}  # nothing repeats in a preview
@@ -410,7 +441,7 @@ class Window(Adw.ApplicationWindow):
                 images = [gd.render_key({}, theme)] * gd.KEYS
                 self.show_error(str(e))
         else:
-            images = [gd.render_key(spec, theme) for spec in page["keys"]]
+            images = [gd.render_key(spec if isinstance(spec, dict) else {}, theme) for spec in slots]
         for i, img in enumerate(images):
             self.key_pictures[i].set_paintable(texture(img.resize((KEY_PREVIEW, KEY_PREVIEW))))
             if i == self.key:
@@ -419,12 +450,63 @@ class Window(Adw.ApplicationWindow):
                 self.key_buttons[i].remove_css_class("selected")
         now = time.localtime()
         state = {
-            "profile": self.profile, "page": page["name"], "page_index": self.page, "page_count": len(pages),
+            "profile": self.profile, "page": gd.place_label(page["name"], page.get("keys", []), self.folder_path),
+            "page_index": self.page, "page_count": len(pages),
             "clock": time.strftime(self.model.config.get("clock_format", "%H:%M"), now),
             "date": time.strftime("%A %d %B", now).upper(), "volume": (42, False),
-            "media": "Artist — Now playing", "media_icon": "󰐊", "error": None,
+            "title": "Now playing", "artist": "Artist",
+            "media_icon": "󰐊", "position": 80, "length": 200, "error": None,
+            "screen": self.model.profiles[self.profile]["data"].get("screen"),
+            **gd.keyboard_status(),
         }
+        playing = gd.current_media()
+        if playing:
+            state.update(playing)
         self.lcd.set_paintable(texture(gd.render_lcd(state, theme).resize(LCD_PREVIEW)))
+        self.refresh_folder_bar()
+
+    def refresh_folder_bar(self):
+        while (child := self.folder_buttons.get_first_child()):
+            self.folder_buttons.remove(child)
+        if not self.folder_path:
+            self.folder_buttons.set_visible(False)
+            return
+        self.folder_buttons.set_visible(True)
+        page = self.pages()[self.page]
+        names = [page["name"]]
+        keys = page.get("keys", [])
+        for index in self.folder_path:
+            spec = keys[index] if isinstance(keys, list) and 0 <= index < len(keys) else {}
+            names.append(str(spec.get("label") or "Folder") if isinstance(spec, dict) else "Folder")
+            children = spec.get("folder") if isinstance(spec, dict) else None
+            keys = children if isinstance(children, list) else []
+        for depth, name in enumerate(names):
+            button = Gtk.Button(label=name)
+            if depth == len(names) - 1:
+                button.add_css_class("suggested-action")
+            else:
+                button.connect("clicked", lambda _b, depth=depth: self.show_folder_depth(depth))
+            self.folder_buttons.append(button)
+
+    def show_folder_depth(self, depth):
+        previous = list(self.folder_path)
+        self.folder_path = previous[:depth]
+        self.key = previous[depth] if depth < len(previous) else 0
+        self.refresh_deck()
+        self.build_key_page()
+
+    def open_folder_at(self, index):
+        keys = self.slot_list()
+        spec = keys[index] if keys is not None and 0 <= index < len(keys) else None
+        if not isinstance(spec, dict) or not isinstance(spec.get("folder"), list):
+            return False
+        self._skip_select = index
+        self.folder_path.append(index)
+        self.key = 0
+        self.refresh_deck()
+        self.build_key_page()
+        self.stack.set_visible_child_name("key")
+        return True
 
     def refresh_page_buttons(self):
         while (child := self.page_buttons.get_first_child()):
@@ -444,20 +526,23 @@ class Window(Adw.ApplicationWindow):
     def select_page(self, i):
         if i != self.page:
             self.page = i
+            self.folder_path = []
             self.refresh_deck()
             self.build_key_page()
 
     def select_key(self, i):
+        if self._skip_select == i:
+            self._skip_select = None
+            return
         self.key = i
         self.refresh_deck()
         self.build_key_page()
         self.stack.set_visible_child_name("key")
 
     def swap_keys(self, a, b):
-        page = self.pages()[self.page]
-        if page.get("settings") or a == b:
+        keys = self.slot_list()
+        if keys is None or a == b:
             return False
-        keys = page["keys"]
         keys[a], keys[b] = keys[b], keys[a]
         self.key = b
         self.changed_profile()
@@ -525,11 +610,16 @@ class Window(Adw.ApplicationWindow):
 
         action = Adw.PreferencesGroup(title="When pressed")
         self.add_group(page, action)
-        current = next((i for i, (_, k) in enumerate(ACTIONS) if k and k in spec), 0)
-        if not current and self.picked_kind and self.picked_kind[:3] == (self.profile, self.page, self.key):
-            # key, shortcut and command have no default value, so nothing is saved
-            # until one is typed; keep showing the chosen action and its field
-            current = next(i for i, (_, k) in enumerate(ACTIONS) if k == self.picked_kind[3])
+        # A stat key keeps its reading as the action. Any other action on the
+        # same key is the passthrough, shown in the menu under this one.
+        if spec.get("stat"):
+            current = next(i for i, (_, k) in enumerate(ACTIONS) if k == "stat")
+        else:
+            current = next((i for i, (_, k) in enumerate(ACTIONS) if k and k in spec), 0)
+            if not current and self.picked_kind and self.picked_kind[:4] == self._slot():
+                # key, shortcut and command have no default value, so nothing is saved
+                # until one is typed; keep showing the chosen action and its field
+                current = next(i for i, (_, k) in enumerate(ACTIONS) if k == self.picked_kind[4])
         kind = Adw.ComboRow(title="Action", model=Gtk.StringList.new([a for a, _ in ACTIONS]), selected=current)
         kind.connect("notify::selected", lambda r, _p: self.set_action_kind(ACTIONS[r.get_selected()][1]))
         action.add(kind)
@@ -554,7 +644,7 @@ class Window(Adw.ApplicationWindow):
 
     def add_press_menu(self, group, spec):
         """The action that still runs when a stat key is pressed."""
-        choices = [a for a in ACTIONS if a[1] != "stat"]
+        choices = [a for a in ACTIONS if a[1] not in ("stat", "folder", "back")]
         kind = self.press_kind(spec)
         current = next((i for i, (_, k) in enumerate(choices) if k == kind), 0)
         row = Adw.ComboRow(title="Passthrough", subtitle="This still runs when the key is pressed.",
@@ -565,8 +655,8 @@ class Window(Adw.ApplicationWindow):
 
     def press_kind(self, spec):
         kind = next((k for _, k in ACTIONS if k and k != "stat" and k in spec), None)
-        if kind is None and self.picked_press and self.picked_press[:3] == (self.profile, self.page, self.key):
-            kind = self.picked_press[3]
+        if kind is None and self.picked_press and self.picked_press[:4] == self._slot():
+            kind = self.picked_press[4]
         return kind
 
     def add_action_fields(self, group, spec, kind):
@@ -633,6 +723,16 @@ class Window(Adw.ApplicationWindow):
                                selected=names.index(spec["profile"]) if spec.get("profile") in names else 0)
             row.connect("notify::selected", lambda r, _p, names=names: self.set_field("profile", names[r.get_selected()]))
             group.add(row)
+        elif kind == "folder":
+            row = Adw.ActionRow(title="Folder", subtitle="Opens another 12 keys. The top-left key steps back. "
+                                "Hold that key for a second to return to the top.")
+            button = Gtk.Button(label="Open", valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
+            button.connect("clicked", lambda _b: self.open_folder_at(self.key))
+            row.add_suffix(button)
+            group.add(row)
+        elif kind == "back":
+            group.add(Adw.ActionRow(title="Back", subtitle="A tap leaves this folder. Hold the key for a second "
+                                     "to return to the top. The right dial's press leaves too."))
 
     def colour_row(self, title, value, on_change, default="fg"):
         """A dropdown of theme colours plus a custom colour button; `default` is
@@ -665,12 +765,13 @@ class Window(Adw.ApplicationWindow):
         if spec is None:
             return
         if not spec:
-            spec = {}
-            self.pages()[self.page]["keys"][self.key] = spec
+            spec = self._own_spec()
+            if spec is None:
+                return
         if kind == self.press_kind(spec):
             return  # the menu reports its current choice while the page is built
         self._keep_action(spec, kind, also="stat")
-        self.picked_press = (self.profile, self.page, self.key, kind)
+        self.picked_press = self._slot() + (kind,)
         self.changed_profile()
         self.build_key_page()
 
@@ -704,14 +805,25 @@ class Window(Adw.ApplicationWindow):
             self.set_field("label", galleon_stats.label_for(stat))
         self.build_key_page()
 
+    def _own_spec(self):
+        """This key's dict, replaced when the slot was an empty shared dict."""
+        keys = self.slot_list()
+        if keys is None:
+            return None
+        spec = keys[self.key]
+        if not spec:
+            spec = {}
+            keys[self.key] = spec
+        return spec
+
     def set_field(self, field, value):
         spec = self.spec()
         if spec is None:
             return
-        page_keys = self.pages()[self.page]["keys"]
         if not spec:  # an empty {} may be shared; give this key its own dict
-            spec = {}
-            page_keys[self.key] = spec
+            spec = self._own_spec()
+            if spec is None:
+                return
         if value in ("", None, False):
             spec.pop(field, None)
         else:
@@ -742,8 +854,9 @@ class Window(Adw.ApplicationWindow):
         if spec is None:
             return
         if not spec:
-            spec = {}
-            self.pages()[self.page]["keys"][self.key] = spec
+            spec = self._own_spec()
+            if spec is None:
+                return
         if kind == "stat":
             # Leave whatever the key already does on press; that becomes the passthrough.
             if not spec.get("stat"):
@@ -752,14 +865,24 @@ class Window(Adw.ApplicationWindow):
                     spec["label"] = galleon_stats.label_for("cpu")
         else:
             self._keep_action(spec, kind)
-        self.picked_kind = (self.profile, self.page, self.key, kind)
+            if kind == "folder" and not isinstance(spec.get("folder"), list):
+                spec["folder"] = gd.new_folder()
+                if not spec.get("label"):
+                    spec["label"] = "Folder"
+            if kind == "back":
+                spec["back"] = True
+                if not spec.get("label"):
+                    spec["label"] = "Back"
+                if not spec.get("icon") and not spec.get("image"):
+                    spec["icon"] = gd.BACK_ICON
+        self.picked_kind = self._slot() + (kind,)
         self.changed_profile()
         self.build_key_page()
 
     def clear_key(self):
-        spec = self.spec()
-        if spec is not None:
-            self.pages()[self.page]["keys"][self.key] = {}
+        keys = self.slot_list()
+        if keys is not None:
+            keys[self.key] = {}
             self.changed_profile()
             self.build_key_page()
 
@@ -1145,6 +1268,7 @@ class Window(Adw.ApplicationWindow):
                 return self.toast(f"There is already a page called “{name}”")
             self.data["page"].append({"name": name, "keys": [{} for _ in range(gd.KEYS)]})
             self.page = len(self.data["page"]) - 1
+            self.folder_path = []
             self.after_structure_change()
         self.ask_text("New page", "Name for the page:", "", done)
 
@@ -1156,7 +1280,7 @@ class Window(Adw.ApplicationWindow):
         def done(name):
             old = page["name"]
             for p in self.data["page"]:
-                for k in p["keys"]:
+                for k in gd.each_key(p.get("keys", [])):
                     if k.get("page") == old:
                         k["page"] = name
             if self.data.get("start_page") == old:
@@ -1177,6 +1301,7 @@ class Window(Adw.ApplicationWindow):
             if self.data.get("start_page") == page["name"]:
                 self.data.pop("start_page")
             self.page = max(0, self.page - 1)
+            self.folder_path = []
             self.after_structure_change()
         self.confirm(f"Delete page “{page['name']}”?", "Its keys are removed too.", "Delete", done)
 
@@ -1215,6 +1340,7 @@ class Window(Adw.ApplicationWindow):
                     return self.toast(str(e))
                 self.model.load()
                 self.profile, self.page, self.key = result.name, 0, 0
+                self.folder_path = []
                 self.refresh_all()
                 if result.kept:
                     self.toast(f"Imported “{result.name}”. {result.kept} plugin keys kept their title and picture")
@@ -1236,6 +1362,7 @@ class Window(Adw.ApplicationWindow):
                 gd.write_profile(path, {"theme": gd.DEFAULT_THEME, "page": [{"name": "main", "keys": []}]})
             self.model.load()
             self.profile, self.page, self.key = name, 0, 0
+            self.folder_path = []
             self.refresh_all()
         self.ask_text("Duplicate profile" if source else "New profile", "Name for the profile:",
                       f"{source}-copy" if source else "", done)
@@ -1269,6 +1396,7 @@ class Window(Adw.ApplicationWindow):
             self.replace_profile_refs(name, None)
             self.model.load()
             self.profile, self.page, self.key = next(iter(self.model.profiles)), 0, 0
+            self.folder_path = []
             self.refresh_all()
         self.confirm(f"Delete profile “{name}”?", "Its file is deleted; this can't be undone.", "Delete", done)
 
@@ -1289,7 +1417,7 @@ class Window(Adw.ApplicationWindow):
                 continue
             touched = False
             for page in p["data"]["page"]:
-                for k in page["keys"]:
+                for k in gd.each_key(page.get("keys", [])):
                     if k.get("profile") == old:
                         if new:
                             k["profile"] = new
@@ -1309,6 +1437,7 @@ class Window(Adw.ApplicationWindow):
         if 0 <= i < len(names) and names[i] != self.profile:
             self.flush()
             self.profile, self.page, self.key = names[i], 0, 0
+            self.folder_path = []
             self.refresh_all(keep_dropdown=True)
 
     # -------------------------------------------------------------- general
@@ -1348,8 +1477,21 @@ class Window(Adw.ApplicationWindow):
             self.banner.set_revealed(False)
             if self.profile not in self.model.profiles:
                 self.profile = next(iter(self.model.profiles))
+                self.page = self.key = 0
+                self.folder_path = []
+            self.folder_path = self.resolved_folder(self.folder_path)
             self.refresh_all()
+        elif self._stats_visible():
+            self.refresh_deck()
         return True
+
+    def _stats_visible(self):
+        try:
+            page = self.pages()[self.page]
+        except (IndexError, KeyError):
+            return False
+        keys = self.slot_list()
+        return bool(keys) and any(isinstance(k, dict) and k.get("stat") for k in keys)
 
     def follow_deck(self):
         """When the deck changes profile or page (a dial, a key, a game taking focus),
@@ -1361,17 +1503,27 @@ class Window(Adw.ApplicationWindow):
         self.followed = state
         if self.pending or state.get("profile") not in self.model.profiles:
             return True
+        folder = state.get("folder") if isinstance(state.get("folder"), list) else []
         if state["profile"] != self.profile:
             self.flush()
             self.profile, self.page, self.key = state["profile"], 0, 0
             names = [p["name"] for p in self.pages()]
             self.page = names.index(state["page"]) if state.get("page") in names else 0
+            self.folder_path = self.resolved_folder(folder)
             self.refresh_all()
             self.toast(f"Following the deck: {self.profile}")
         else:
             names = [p["name"] for p in self.pages()]
+            changed = False
             if state.get("page") in names and names.index(state["page"]) != self.page:
                 self.page = names.index(state["page"])
+                self.folder_path = []
+                changed = True
+            resolved = self.resolved_folder(folder)
+            if resolved != self.folder_path:
+                self.folder_path = resolved
+                changed = True
+            if changed:
                 self.refresh_page_buttons()
                 self.refresh_deck()
                 self.build_key_page()
@@ -1481,6 +1633,7 @@ class Window(Adw.ApplicationWindow):
         if name in self.model.profiles:
             self.flush()
             self.profile, self.page, self.key = name, 0, 0
+            self.folder_path = []
             self.refresh_all()
             self.stack.set_visible_child_name("key")
 
@@ -1558,6 +1711,7 @@ class Window(Adw.ApplicationWindow):
             return self.show_error(f"Config error: {e}")
         if self.profile not in self.model.profiles:
             self.profile, self.page, self.key = next(iter(self.model.profiles)), 0, 0
+            self.folder_path = []
         self.page = min(self.page, len(self.pages()) - 1)
         self.refresh_all()
 

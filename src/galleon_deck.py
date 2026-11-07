@@ -62,6 +62,9 @@ CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduse
 CONFIG_PATH = os.path.join(CONFIG_DIR, "config.toml")
 PROFILE_DIR = os.path.join(CONFIG_DIR, "profiles")
 THEME_DIR = os.path.join(CONFIG_DIR, "themes")
+BACK_ICON = "\U000F004D"  # md-arrow_left
+FOLDER_ICON = "\uf07b"  # fa-folder
+FOLDER_HOLD = 1.0
 
 
 def log(*args):
@@ -434,9 +437,103 @@ def render_stat_key(spec, theme, pressed=False):
     return img
 
 
+def new_folder():
+    """Twelve keys for a new folder. The top-left key steps back out."""
+    back = {"back": True, "icon": BACK_ICON, "label": "Back"}
+    return [back] + [{} for _ in range(KEYS - 1)]
+
+
+def pad_key_slots(keys, seen=None):
+    """Give a key list, and any folder inside it, exactly KEYS slots."""
+    if not isinstance(keys, list):
+        return
+    seen = seen or set()
+    if id(keys) in seen:
+        return
+    seen.add(id(keys))
+    del keys[KEYS:]
+    while len(keys) < KEYS:
+        keys.append({})
+    for spec in keys:
+        if isinstance(spec, dict) and isinstance(spec.get("folder"), list):
+            pad_key_slots(spec["folder"], seen)
+
+
+def walk_folders(keys, folder_path):
+    """Follow folder key indexes. Returns the keys on screen and the path that still exists."""
+    if not isinstance(keys, list):
+        return [], []
+    current, resolved = keys, []
+    for index in folder_path or ():
+        if isinstance(index, bool) or not isinstance(index, int) or not (0 <= index < len(current)):
+            break
+        spec = current[index]
+        children = spec.get("folder") if isinstance(spec, dict) else None
+        if not isinstance(children, list):
+            break
+        pad_key_slots(children)
+        resolved.append(index)
+        current = children
+    return current, resolved
+
+
+def each_key(keys, seen=None):
+    """Every key spec on these pages of keys, including keys inside folders."""
+    if not isinstance(keys, list):
+        return
+    seen = seen or set()
+    if id(keys) in seen:
+        return
+    seen.add(id(keys))
+    for spec in keys:
+        if not isinstance(spec, dict):
+            continue
+        yield spec
+        if isinstance(spec.get("folder"), list):
+            yield from each_key(spec["folder"], seen)
+
+
+def place_label(page_name, keys, folder_path):
+    """Page name, then each open folder's label, for the clock-screen header."""
+    parts = [str(page_name)]
+    current = keys if isinstance(keys, list) else []
+    for index in folder_path or ():
+        if isinstance(index, bool) or not isinstance(index, int) or not (0 <= index < len(current)):
+            break
+        spec = current[index]
+        if not isinstance(spec, dict) or not isinstance(spec.get("folder"), list):
+            break
+        parts.append(str(spec.get("label") or "Folder"))
+        current = spec["folder"]
+    return " / ".join(parts)
+
+
+def _stored_key(spec, seen=None):
+    """A key as it should be written. Trailing empty slots inside a folder are dropped."""
+    if not isinstance(spec, dict) or not spec:
+        return spec if isinstance(spec, dict) else {}
+    seen = seen or set()
+    out = dict(spec)
+    folder = out.get("folder")
+    if isinstance(folder, list):
+        if id(folder) in seen:
+            out["folder"] = []
+        else:
+            seen.add(id(folder))
+            children = [_stored_key(child, seen) if isinstance(child, dict) else {} for child in folder]
+            while children and not children[-1]:
+                children.pop()
+            out["folder"] = children
+    return out
+
+
 def render_key(spec, theme, pressed=False):
     if spec.get("stat"):
         return render_stat_key(spec, theme, pressed)
+    # A folder with no icon of its own shows the keys inside it, the way a
+    # Stream Deck folder key does. An icon or image replaces that mosaic.
+    if isinstance(spec.get("folder"), list) and not spec.get("image") and not spec.get("icon"):
+        return render_folder_face(spec, theme, pressed)
     bg = colour(spec.get("bg", theme["key_bg"]), theme)
     fg = colour(spec.get("fg", theme["fg"]), theme)
     if pressed:
@@ -487,6 +584,58 @@ def render_key(spec, theme, pressed=False):
             f = fit(d, label, theme["font"], 72 if len(label) <= 2 else 40, KEY_PX - 20)
             d.text((KEY_PX // 2, KEY_PX // 2), label, font=f, fill=fg, anchor="mm")
     return img
+
+
+def render_folder_face(spec, theme, pressed=False):
+    """The folder key: a tiny copy of the 12 keys inside it."""
+    bg = colour(spec.get("bg", theme["key_bg"]), theme)
+    fg = colour(spec.get("fg", theme["fg"]), theme)
+    if pressed:
+        bg, fg = fg, bg
+    img = Image.new("RGB", (KEY_PX, KEY_PX), bg)
+    d = ImageDraw.Draw(img)
+    bw = theme["border_width"]
+    draw_frame(d, [bw, bw, KEY_PX - 1 - bw, KEY_PX - 1 - bw], theme,
+               colour(spec.get("border", theme["border"]), theme), bw, tick=spec.get("border"))
+    label = str(spec.get("label") or "")
+    children = [child if isinstance(child, dict) else {} for child in spec.get("folder") or []]
+    children = (children + [{}] * KEYS)[:KEYS]
+    gap = 3
+    left, top = bw + 7, bw + 7
+    right = KEY_PX - bw - 7
+    bottom = KEY_PX - bw - (30 if label else 7)
+    cell_w = (right - left - gap * 2) / 3
+    cell_h = (bottom - top - gap * 3) / 4
+    dim = colour(theme.get("dim", "#888888"), theme)
+    for i, child in enumerate(children):
+        face = _folder_cell(child, theme)
+        tw, th = max(1, int(cell_w)), max(1, int(cell_h))
+        face = face.resize((tw, th), Image.Resampling.LANCZOS)
+        x = int(left + (i % 3) * (cell_w + gap))
+        y = int(top + (i // 3) * (cell_h + gap))
+        img.paste(face, (x, y))
+        if not child:
+            d.rounded_rectangle([x, y, x + tw - 1, y + th - 1], radius=2, outline=dim, width=1)
+    if label:
+        d = ImageDraw.Draw(img)
+        f = fit(d, label, theme["font"], 22, KEY_PX - 16)
+        d.text((KEY_PX // 2, KEY_PX - bw - 16), label, font=f, fill=fg, anchor="mm")
+    if pressed:
+        img = Image.eval(img, lambda v: int(v * 0.55))
+    return img
+
+
+def _folder_cell(spec, theme):
+    """One tile of a folder mosaic. A nested folder stays a folder glyph, so the
+    preview does not try to draw a mosaic of mosaics."""
+    if not spec:
+        return Image.new("RGB", (KEY_PX, KEY_PX), theme["key_bg"])
+    if isinstance(spec.get("folder"), list) and not spec.get("image") and not spec.get("icon"):
+        shown = {"icon": FOLDER_ICON}
+        if spec.get("label"):
+            shown["label"] = spec["label"]
+        return render_key(shown, theme)
+    return render_key(spec, theme)
 
 
 def render_theme_key(name, theme, current):
@@ -1544,7 +1693,7 @@ def write_profile(path, profile):
     for page in profile.get("page", []):
         if page.get("settings"):
             continue  # generated at load time
-        keys = list(page.get("keys", []))
+        keys = [_stored_key(k) for k in page.get("keys", [])]
         while keys and not keys[-1]:
             keys.pop()
         out += ["", "[[page]]", f"name = {toml_value(page['name'])}", "keys = ["]
@@ -1564,13 +1713,38 @@ def validate_pages(pages, where):
         keys = p.get("keys", [])
         if len(keys) > KEYS:
             raise ValueError(f"{where}: page {p['name']!r} has {len(keys)} keys; the deck has {KEYS}")
-        p["keys"] = keys + [{}] * (KEYS - len(keys))
-        for k in p["keys"]:
-            for field in ("key", "keys", "hold", "repeat"):
-                if field in k:
-                    Keyboard.codes(k[field])  # validate now, not on first press
-            if "sequence" in k:
-                Keyboard.steps(k["sequence"])
+        p["keys"] = list(keys)
+        _validate_key_list(p["keys"], f"{where} page {p['name']!r}")
+
+
+def _validate_key_list(keys, where, seen=None):
+    if not isinstance(keys, list):
+        raise ValueError(f"{where}: keys are not a list")
+    seen = seen or set()
+    if id(keys) in seen:
+        raise ValueError(f"{where}: a folder contains itself")
+    seen.add(id(keys))
+    if len(keys) > KEYS:
+        raise ValueError(f"{where}: a folder has {len(keys)} keys; the deck has {KEYS}")
+    while len(keys) < KEYS:
+        keys.append({})
+    for spec in keys:
+        if not isinstance(spec, dict):
+            raise ValueError(f"{where}: a key is not a table")
+        for field in ("key", "keys", "hold", "repeat"):
+            if field not in spec:
+                continue
+            if not isinstance(spec[field], str):
+                raise ValueError(f"{where}: {field} must be text")
+            Keyboard.codes(spec[field])  # validate now, not on first press
+        if "sequence" in spec:
+            Keyboard.steps(spec["sequence"])
+        folder = spec.get("folder")
+        if folder is None:
+            continue
+        if not isinstance(folder, list):
+            raise ValueError(f"{where}: a folder is not a list of keys")
+        _validate_key_list(folder, where, seen)
 
 
 def ensure_config():
@@ -1775,6 +1949,8 @@ class App:
         self.error = None
         self.profile = None   # name
         self.page = 0
+        self.folder_path = []  # key indexes from the page down into open folders
+        self.down_at = {}  # key index -> time a back key was pressed
         self.history = []
         self.kb = Keyboard()
         self.deck = None
@@ -1814,7 +1990,9 @@ class App:
             self.profile = start if start in cfg["profiles"] else next(iter(cfg["profiles"]))
             self.page = self.start_page_index()
             self.history.clear()
+            self.folder_path.clear()
         self.page = min(self.page, len(self.pages()) - 1)
+        self.folder_path = walk_folders(self._page_keys(), self.folder_path)[1]
         log(f"config loaded: profiles {', '.join(cfg['profiles'])}")
         if self.deck:
             self.deck.brightness(cfg.get("brightness", 70))
@@ -1850,9 +2028,25 @@ class App:
                          **({"fg": "accent"} if name == self.profile else {})})
         return keys + [{}] * (KEYS - len(keys))
 
+    def _page_keys(self):
+        page = self.pages()[self.page]
+        if page.get("settings"):
+            return []
+        keys = page.get("keys", [])
+        return keys if isinstance(keys, list) else []
+
     def keys(self):
         page = self.pages()[self.page]
-        return self.settings_keys() if page.get("settings") else page["keys"]
+        if page.get("settings"):
+            self.folder_path = []
+            return self.settings_keys()
+        keys, path = walk_folders(self._page_keys(), self.folder_path)
+        self.folder_path = path
+        return keys
+
+    def place_name(self):
+        page = self.pages()[self.page]
+        return place_label(page["name"], self._page_keys(), self.folder_path)
 
     # drawing --------------------------------------------------------------
     def key_image(self, i, pressed=False):
@@ -1872,7 +2066,8 @@ class App:
         """Tell the configurator what the deck shows, so it can follow along."""
         if not self.cfg:
             return
-        state = {"profile": self.profile, "page": self.pages()[self.page]["name"]}
+        state = {"profile": self.profile, "page": self.pages()[self.page]["name"],
+                 "folder": list(self.folder_path)}
         if state != self.published:
             try:
                 with open(STATE_FILE + ".tmp", "w") as f:
@@ -1921,7 +2116,7 @@ class App:
         now = time.localtime()
         return {
             "profile": self.profile or "galleon-deck",
-            "page": self.pages()[self.page]["name"],
+            "page": self.place_name(),
             "page_index": self.page,
             "page_count": len(self.pages()),
             "clock": time.strftime(self.cfg.get("clock_format", "%H:%M") if self.cfg else "%H:%M", now),
@@ -1949,12 +2144,14 @@ class App:
             self.kb.release(self.held.pop(i))
         for i in list(self.repeating):
             self.repeating.pop(i).set()
+        self.down_at.clear()
 
     def set_page(self, index, remember=True):
         index %= len(self.pages())
         if index == self.page:
             return
         self.release_held()
+        self.folder_path.clear()
         if remember:
             self.history.append(self.page)
         self.page = index
@@ -1962,9 +2159,38 @@ class App:
             self.draw_keys()
         self.lcd_dirty = True
 
+    def enter_folder(self, index):
+        self.release_held()
+        self.folder_path.append(index)
+        if self.deck:
+            self.draw_keys()
+        self.lcd_dirty = True
+
+    def leave_folder(self, to_root=False):
+        """Step out of a folder. Hold returns to the page; with no folder open,
+        a tap is page-back and a hold returns to the profile's start page."""
+        self.release_held()
+        if self.folder_path:
+            if to_root:
+                self.folder_path.clear()
+            else:
+                self.folder_path.pop()
+            if self.deck:
+                self.draw_keys()
+            self.lcd_dirty = True
+            return
+        if to_root:
+            self.history.clear()
+            self.set_page(self.start_page_index(), remember=False)
+            return
+        self.goto("back")
+
     def goto(self, name):
         names = [p["name"] for p in self.pages()]
         if name == "back":
+            if self.folder_path:
+                self.leave_folder(False)
+                return
             # Pages reached with the dial leave no history; fall back to the start page.
             self.set_page(self.history.pop() if self.history else self.start_page_index(), remember=False)
         elif name == "next":
@@ -1982,6 +2208,7 @@ class App:
         self.release_held()
         self.profile = name
         self.page = self.start_page_index()
+        self.folder_path.clear()
         self.history.clear()
         log(f"profile: {name}")
         self.transition()
@@ -2111,7 +2338,15 @@ class App:
         spec = self.keys()[i]
         if not spec:
             return
-        page, profile = self.page, self.profile
+        if spec.get("back"):
+            self.down_at[i] = time.monotonic()
+            if self.deck:
+                self.draw_key(i, pressed=True)
+            return
+        if isinstance(spec.get("folder"), list):
+            self.enter_folder(i)
+            return
+        page, profile, folders = self.page, self.profile, tuple(self.folder_path)
         try:
             if "key" in spec or "keys" in spec:
                 if str(spec.get("key", "")).upper().startswith("KP"):
@@ -2126,7 +2361,7 @@ class App:
             if "exec" in spec:
                 proc = run(spec["exec"])
                 if spec.get("confirm"):
-                    threading.Thread(target=self.confirm, args=(i, proc, page, profile), daemon=True).start()
+                    threading.Thread(target=self.confirm, args=(i, proc, page, profile, folders), daemon=True).start()
             if "media" in spec:
                 if shutil_which("playerctl"):
                     run_quiet(["playerctl", spec["media"]])
@@ -2147,7 +2382,8 @@ class App:
                 self.set_brightness(spec["brightness"])
         except (OSError, ValueError) as e:
             log(f"key {i}: {e}")
-        if self.page == page and self.profile == profile:  # a switch has already redrawn every key
+        if (self.page, self.profile, tuple(self.folder_path)) == (page, profile, folders):
+            # A page or profile switch has already redrawn every key.
             self.draw_key(i, pressed=True)
 
     def play_sequence(self, spec):
@@ -2192,7 +2428,7 @@ class App:
                 log(f"repeat: {e}")
         threading.Thread(target=repeat, daemon=True).start()
 
-    def confirm(self, i, proc, page, profile):
+    def confirm(self, i, proc, page, profile, folders=()):
         """Flash key i with the result of its command: a tick on success, a cross on failure."""
         ok = proc.wait() == 0
         time.sleep(0.15)  # let the key-up redraw land first
@@ -2200,20 +2436,32 @@ class App:
         spec = {"icon": "󰄬" if ok else "󰅖", "label": "done" if ok else "failed",
                 "bg": th["accent"] if ok else colour(th.get("frame", "#e0231a"), th), "fg": th["key_bg"],
                 "border": th["key_bg"]}
+        here = (page, profile, tuple(folders))
+
+        def showing():
+            return self.deck and (self.page, self.profile, tuple(self.folder_path)) == here
+
         for _ in range(2):
             with self.lock:
-                if not self.deck or (self.page, self.profile) != (page, profile):
+                if not showing():
                     return
                 self.deck.key_image(i, jpeg(render_key(spec, th)))
             time.sleep(0.6)
             with self.lock:
-                if self.deck and (self.page, self.profile) == (page, profile):
-                    self.draw_key(i)
+                if not showing():
+                    return
+                self.draw_key(i)
             time.sleep(0.2)
 
     def key_up(self, i):
         if i in self.held:
             self.kb.release(self.held.pop(i))
+        started = self.down_at.pop(i, None)
+        if started is not None:
+            spec = self.keys()[i] if 0 <= i < KEYS else {}
+            if isinstance(spec, dict) and spec.get("back"):
+                self.leave_folder(time.monotonic() - started >= FOLDER_HOLD)
+                return
         if self.keys()[i]:
             self.draw_key(i)
 
@@ -2261,7 +2509,16 @@ class App:
                             self.volume = volume()
                         elif self.cfg:
                             self.history.clear()
-                            self.set_page(self.start_page_index(), remember=False)
+                            home = self.start_page_index()
+                            # Already on the start page: the press leaves an open folder.
+                            if self.page == home and self.folder_path:
+                                self.folder_path.clear()
+                                self.release_held()
+                                if self.deck:
+                                    self.draw_keys()
+                                self.lcd_dirty = True
+                            else:
+                                self.set_page(home, remember=False)
                     self.dial_down[n] = down
             self.lcd_dirty = True
 
@@ -2393,7 +2650,7 @@ STATE_FILE = os.path.join(os.environ.get("XDG_RUNTIME_DIR") or "/tmp", "galleon-
 
 
 def deck_state():
-    """What the running deck shows: {"profile": ..., "page": ...}, or None."""
+    """What the running deck shows: {"profile", "page", "folder"}, or None."""
     try:
         with open(STATE_FILE) as f:
             return json.load(f)

@@ -28,6 +28,12 @@
 #            confirm = true                  with exec: flash ✓ done / ✗ failed when it finishes
 #            media   = "play-pause"          play-pause, next, previous, stop
 #            page    = "apps" | "back"       switch page
+#            folder  = [ { back = true, label = "Back", icon = "…" }, … ]
+#                                            open another 12 keys. The top-left starts
+#                                            as Back: tap it to leave, hold it a second
+#                                            to return to the top. A right-dial press
+#                                            leaves the folder too.
+#            back    = true                  this key leaves the folder
 #            profile = "gaming"              switch profile
 #            stat    = "cpu"                 a live KDE System Monitor reading
 #                                            (cpu, ram, gpu, vram, disk, net, zfs, arc, …).
@@ -45,7 +51,8 @@
 # for a combo: SHIFT+PAGEDOWN, SHIFT+7. Full list in the README.
 #
 # Dials: left turns volume / press mutes. Right turns through pages / press
-# returns to the profile's start page / hold it and turn to switch profile.
+# returns to the profile's start page (or leaves a folder when you are already
+# there) / hold it and turn to switch profile.
 
 start_profile = "desktop"
 brightness = 70

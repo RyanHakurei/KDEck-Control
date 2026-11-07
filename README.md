@@ -11,11 +11,14 @@ Windows and macOS, so this project takes its place.
 📖 **[Read the wiki](https://github.com/NLMP-DDHS/galleon-deck/wiki)** for a full guide to the app, config files and troubleshooting.
 
 - **Profiles and pages** of 12 keys, like Elgato's app: icons, labels, images, colours.
+- **Folders:** a key opens another set of 12 keys. The top-left key steps back;
+  hold it for a second to return to the top. Double-click the folder in the app to edit inside it.
 - **Key actions:** numpad keys, any key or shortcut, run a command (with an optional ✓/✗
-  flash when it finishes), media controls, switch page, switch profile.
+  flash when it finishes), media controls, switch page, open a folder, switch profile.
 - **Top screen:** profile and page, a clock and date, what's playing, a volume bar.
 - **Dials:** left sets the volume and mutes when pressed. Right turns through pages,
-  returns to the start page when pressed, and switches profile when held and turned.
+  returns to the start page when pressed (and leaves a folder if you are already there),
+  and switches profile when held and turned.
 - **Auto-switching:** changes profile when a game or app gets focus (Hyprland, Sway,
   i3, niri and X11 desktops).
 - **Themes:** 7 built-in themes, your own, or one **generated from your wallpaper**.
