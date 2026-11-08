@@ -24,6 +24,7 @@ target_link_libraries(galleon-deck-config PRIVATE
     Qt6::QuickControls2
     KF6::Kirigami
     KF6::I18n
+    KF6::I18nQml
     KF6::CoreAddons
     KF6::IconThemes
 )

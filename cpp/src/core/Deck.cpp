@@ -4,6 +4,7 @@
 #include <QDebug>
 #include <QDir>
 #include <QFile>
+#include <QFileInfo>
 
 #include <algorithm>
 #include <cerrno>
@@ -44,7 +45,9 @@ QString Deck::findHidraw()
         const QString text = QString::fromUtf8(uevent.readAll());
         if (!text.contains(id))
             continue;
-        const QString device = QFile::symLinkTarget(dir.absoluteFilePath(name) + QStringLiteral("/device"));
+        // symLinkTarget is the relative link. Interface 0 is only visible
+        // once that link is resolved, the same way Python uses realpath.
+        const QString device = QFileInfo(dir.absoluteFilePath(name) + QStringLiteral("/device")).canonicalFilePath();
         if (device.contains(QStringLiteral(":1.0/")))
             return QStringLiteral("/dev/") + name;
     }

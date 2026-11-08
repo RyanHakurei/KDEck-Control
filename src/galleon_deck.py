@@ -27,6 +27,7 @@ import fcntl
 import glob
 import io
 import json
+import locale
 import os
 import random
 import re
@@ -172,19 +173,63 @@ WALLPAPER_COMMANDS = [  # tried in order when [wallpaper_theme] command isn't se
 ]
 
 
+def image_from_output(out):
+    """An existing image path mentioned in a wallpaper tool's output.
+
+    file:// URLs may contain spaces (KDE prints those). A bare printed path is
+    accepted too, when the command already resolved the file.
+    """
+    if not out:
+        return None
+    for match in re.finditer(r"file://(\S.*?\.(?:png|jpe?g|webp|bmp|gif))", out, re.I):
+        path = os.path.expanduser(match.group(1).rstrip("'\" ,"))
+        if os.path.isfile(path):
+            return path
+    for token in re.findall(r"(?:file://)?(/[^\s'\",]+\.(?:png|jpe?g|webp|bmp|gif))", out, re.I):
+        path = os.path.expanduser(token)
+        if os.path.isfile(path):
+            return path
+    for line in out.splitlines():
+        candidate = os.path.expanduser(line.strip().strip("'\""))
+        if candidate.startswith("/") and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
+def run_wallpaper_command(command):
+    """Run a wallpaper command. Pipelines and redirects go through a shell;
+    simple commands stay a direct argv, as before."""
+    shell = any(ch in command for ch in "|;&<>$`\n")
+    try:
+        if shell:
+            return subprocess.run(command, shell=True, capture_output=True, text=True, timeout=3).stdout
+        return cmd_output(shlex_split(command))
+    except (OSError, subprocess.TimeoutExpired, ValueError):
+        return ""
+
+
 def wallpaper_path(settings):
     """The current wallpaper's path, from the configured command or the first
-    common wallpaper tool that answers with an existing image file."""
-    commands = [settings["command"]] if settings.get("command") else WALLPAPER_COMMANDS
+    common wallpaper tool that answers with an existing image file.
+
+    A configured command is tried first. If it doesn't name an existing image
+    (a pipeline that stops at a space, or a tool that isn't installed), the
+    usual detectors still run. KDE's plasmashell URL is one of those, and it
+    can contain spaces.
+    """
+    commands = []
+    if settings.get("command"):
+        commands.append(settings["command"])
+    commands.extend(WALLPAPER_COMMANDS)
+    commands.append("qdbus6 org.kde.plasmashell /PlasmaShell org.kde.PlasmaShell.wallpaper 0")
+    seen = set()
     for command in commands:
-        try:
-            out = cmd_output(shlex_split(command))
-        except ValueError:
+        if not command or command in seen:
             continue
-        for token in re.findall(r"(?:file://)?(/[^\s'\",]+\.(?:png|jpe?g|webp|bmp|gif))", out, re.I):
-            path = os.path.expanduser(token.replace("file://", ""))
-            if os.path.isfile(path):
-                return path
+        seen.add(command)
+        path = image_from_output(run_wallpaper_command(command))
+        if path:
+            return path
     return None
 
 
@@ -528,14 +573,18 @@ def _stored_key(spec, seen=None):
     return out
 
 
-# A key is one JPEG on the USB link. Cap how often, and how many at once, so a
-# page of GIFs cannot stall key presses. Delays under 20 ms are the GIF "as fast
-# as possible" value; browsers play those at 100 ms.
-_MIN_FRAME_S = 0.05
-_MAX_ANIM_FRAMES = 120
+# A key is one JPEG on the USB link. Identical frames become one hold, so the
+# deck is not sent the same picture again. Delays under 20 ms are the GIF "as
+# fast as possible" value; browsers play those at 100 ms. A delay the file
+# actually set is kept, down to 20 ms. One wake stops after a few milliseconds
+# so a page of animations still leaves room to read a key press.
+_MIN_FRAME_S = 0.02
+_MAX_ANIM_FRAMES = 240
 _MAX_ANIM_EDGE = 320
-ANIM_PER_WAKE = 3
+_ANIM_BUDGET_S = 0.008
 _anim_cache = {}  # absolute path -> (mtime token, frames or None, durations or None)
+_render_cache = {}  # (path, token, frame, style) -> composited key image
+_jpeg_cache = {}  # same key -> JPEG bytes already sent to the deck
 
 
 def _frame_seconds(im):
@@ -591,18 +640,27 @@ def _decode_animation(path):
         count = getattr(im, "n_frames", 1) or 1
         if count <= 1:
             return None, None
-        if count > _MAX_ANIM_FRAMES:
-            log(f"image {path}: playing the first {_MAX_ANIM_FRAMES} of {count} frames")
-            count = _MAX_ANIM_FRAMES
         frames, durations = [], []
+        truncated = False
         for i in range(count):
             im.seek(i)
             frame = im.convert("RGBA").copy()
             if max(frame.size) > _MAX_ANIM_EDGE:
                 frame.thumbnail((_MAX_ANIM_EDGE, _MAX_ANIM_EDGE), Image.Resampling.LANCZOS)
+            duration = _frame_seconds(im)
+            # A run of identical pictures is one hold. Stream Deck exports pad
+            # movement with copies, and resending those copies stalls the bus.
+            if frames and frame.tobytes() == frames[-1].tobytes():
+                durations[-1] += duration
+                continue
+            if len(frames) >= _MAX_ANIM_FRAMES:
+                truncated = True
+                break
             frames.append(frame)
-            durations.append(_frame_seconds(im))
-        return (frames, durations) if frames else (None, None)
+            durations.append(duration)
+        if truncated:
+            log(f"image {path}: playing the first {_MAX_ANIM_FRAMES} changed frames of {count}")
+        return (frames, durations) if len(frames) > 1 else (None, None)
     except Exception as e:  # a bad GIF should not take the deck down
         log(f"image {path}: {e}")
         return None, None
@@ -634,6 +692,49 @@ def _load_animation(path):
     return frames, durations, token
 
 
+def _style_key(spec, theme, pressed):
+    """What besides the frame changes the pixels of a key."""
+    return (
+        bool(spec.get("fill")),
+        spec.get("label") or "",
+        spec.get("icon") or "",
+        spec.get("fg") or "",
+        spec.get("bg") or "",
+        spec.get("border") or "",
+        bool(pressed),
+        theme.get("font"),
+        theme.get("icon_font"),
+        theme.get("fg"),
+        theme.get("key_bg"),
+        theme.get("bg"),
+        theme.get("accent"),
+        theme.get("dim"),
+        theme.get("border"),
+        theme.get("tick"),
+        theme.get("key_style"),
+        theme.get("radius"),
+        theme.get("border_width"),
+    )
+
+
+def _anim_cache_key(spec, theme, pressed, when):
+    """Cache identity for one displayed frame, or None when this draw is not an animation."""
+    if when is None or not isinstance(spec, dict) or spec.get("stat") or not spec.get("image"):
+        return None
+    anim = key_animation(spec)
+    if not anim:
+        return None
+    _frames, durations, token = anim
+    return (spec.get("image"), token, frame_index_at(durations, when), _style_key(spec, theme, pressed))
+
+
+def _remember(cache, key, value, limit):
+    cache[key] = value
+    if len(cache) > limit:
+        cache.pop(next(iter(cache)))
+    return value
+
+
 def key_animation(spec):
     """The animation on this key, or None when the image is a still (or absent)."""
     if not isinstance(spec, dict) or spec.get("stat") or not spec.get("image"):
@@ -656,7 +757,7 @@ def _open_key_image(image, when):
     return Image.open(path).convert("RGBA")
 
 
-def render_key(spec, theme, pressed=False, when=None):
+def _render_key_body(spec, theme, pressed=False, when=None):
     if spec.get("stat"):
         return render_stat_key(spec, theme, pressed)
     # A folder with no icon of its own shows the keys inside it, the way a
@@ -713,6 +814,32 @@ def render_key(spec, theme, pressed=False, when=None):
             f = fit(d, label, theme["font"], 72 if len(label) <= 2 else 40, KEY_PX - 20)
             d.text((KEY_PX // 2, KEY_PX // 2), label, font=f, fill=fg, anchor="mm")
     return img
+
+
+def render_key(spec, theme, pressed=False, when=None):
+    """Draw one key. An animation frame is remembered, so the next loop does not scale it again."""
+    cache_key = _anim_cache_key(spec, theme, pressed, when)
+    if cache_key is not None:
+        cached = _render_cache.get(cache_key)
+        if cached is not None:
+            return cached
+    image = _render_key_body(spec, theme, pressed, when)
+    if cache_key is not None:
+        return _remember(_render_cache, cache_key, image, 256)
+    return image
+
+
+def key_jpeg(spec, theme, pressed=False, when=None):
+    """JPEG for a key. Repeating animation frames reuse the bytes from the first encode."""
+    cache_key = _anim_cache_key(spec, theme, pressed, when)
+    if cache_key is not None:
+        cached = _jpeg_cache.get(cache_key)
+        if cached is not None:
+            return cached
+    blob = jpeg(render_key(spec, theme, pressed, when=when))
+    if cache_key is not None:
+        return _remember(_jpeg_cache, cache_key, blob, 512)
+    return blob
 
 
 def render_folder_face(spec, theme, pressed=False):
@@ -1642,6 +1769,249 @@ def shutil_which(name):
     return shutil.which(name)
 
 
+def _data_dirs():
+    home = os.environ.get("XDG_DATA_HOME") or os.path.join(os.path.expanduser("~"), ".local", "share")
+    extra = os.environ.get("XDG_DATA_DIRS") or "/usr/local/share:/usr/share"
+    return [home] + [part for part in extra.split(":") if part]
+
+
+def _desktop_names():
+    raw = os.environ.get("XDG_CURRENT_DESKTOP", "")
+    return [part.strip().casefold() for part in re.split(r"[:;]", raw) if part.strip()]
+
+
+def _unescape_desktop(text):
+    out = []
+    i = 0
+    while i < len(text):
+        if text[i] == "\\" and i + 1 < len(text):
+            out.append({"s": " ", "n": "\n", "t": "\t", "r": "\r"}.get(text[i + 1], text[i + 1]))
+            i += 2
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
+
+
+def _read_desktop(path):
+    """The [Desktop Entry] group. Localized Name prefers the full locale, then the language."""
+    fields = {"name": "", "localized": "", "icon": "", "exec": "", "type": "",
+              "only_show": "", "not_show": "", "try_exec": "", "no_display": False, "hidden": False}
+    lang = (os.environ.get("LC_MESSAGES") or os.environ.get("LANG") or "").split(".", 1)[0]
+    language = lang.split("_", 1)[0]
+    in_entry = False
+    try:
+        lines = open(path, encoding="utf-8", errors="replace")
+    except OSError:
+        return fields
+    with lines:
+        for raw in lines:
+            line = raw.strip()
+            if not line or line.startswith("#"):
+                continue
+            if line.startswith("["):
+                if in_entry:
+                    break
+                in_entry = line == "[Desktop Entry]"
+                continue
+            if not in_entry or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            key = key.strip()
+            value = _unescape_desktop(value.strip())
+            if key == "Name":
+                fields["name"] = value
+            elif key == f"Name[{lang}]" and lang:
+                fields["localized"] = value
+            elif not fields["localized"] and language and key == f"Name[{language}]":
+                fields["localized"] = value
+            elif key == "Icon":
+                fields["icon"] = value
+            elif key == "Exec":
+                fields["exec"] = value
+            elif key == "Type":
+                fields["type"] = value
+            elif key == "OnlyShowIn":
+                fields["only_show"] = value
+            elif key == "NotShowIn":
+                fields["not_show"] = value
+            elif key == "TryExec":
+                fields["try_exec"] = value
+            elif key == "NoDisplay":
+                fields["no_display"] = value.casefold() == "true"
+            elif key == "Hidden":
+                fields["hidden"] = value.casefold() == "true"
+    return fields
+
+
+def _shown_name(fields):
+    return fields["localized"] or fields["name"]
+
+
+def _listed_in(field, names):
+    if not field or not names:
+        return False
+    return any(part.strip().casefold() in names for part in field.split(";") if part.strip())
+
+
+def _try_exec_ok(try_exec):
+    if not try_exec:
+        return True
+    if try_exec.startswith("/"):
+        return os.path.isfile(try_exec)
+    return bool(shutil_which(try_exec))
+
+
+def _show_in_menu(fields):
+    if fields["type"] != "Application" or fields["no_display"] or fields["hidden"]:
+        return False
+    if not fields["exec"] or not _shown_name(fields) or not _try_exec_ok(fields["try_exec"]):
+        return False
+    names = _desktop_names()
+    if _listed_in(fields["not_show"], names):
+        return False
+    if fields["only_show"] and not _listed_in(fields["only_show"], names):
+        return False
+    return True
+
+
+def _find_desktop(app):
+    if not isinstance(app, str) or not app:
+        return None
+    if app.startswith("/"):
+        return app if os.path.isfile(app) else None
+    filename = app if app.endswith(".desktop") else app + ".desktop"
+    for directory in _data_dirs():
+        path = os.path.join(directory, "applications", filename)
+        if os.path.isfile(path):
+            return path
+    return None
+
+
+def _split_command(text):
+    """Split arguments on whitespace. Double quotes keep a token together, and backslash escapes the next character."""
+    if not isinstance(text, str) or not text.strip():
+        return []
+    out = []
+    token = []
+    quoted = False
+    escape = False
+    for ch in text:
+        if escape:
+            token.append(ch)
+            escape = False
+            continue
+        if ch == "\\":
+            escape = True
+            continue
+        if ch == '"':
+            quoted = not quoted
+            continue
+        if not quoted and ch.isspace():
+            if token:
+                out.append("".join(token))
+                token = []
+            continue
+        token.append(ch)
+    if token:
+        out.append("".join(token))
+    return out
+
+
+_FIELD_CODES = ("%f", "%F", "%u", "%U", "%d", "%D", "%n", "%N", "%c", "%k", "%v", "%m")
+
+
+def _argv_from_exec(exec_line, icon, args):
+    argv = []
+    for token in _split_command(exec_line):
+        if token == "%i":
+            if icon:
+                argv.extend(["--icon", icon])
+            continue
+        token = token.replace("%%", "\x01")
+        for code in _FIELD_CODES:
+            token = token.replace(code, "")
+        token = token.replace("\x01", "%")
+        if token:
+            argv.append(token)
+    argv.extend(_split_command(args or ""))
+    return argv if argv and argv[0] else []
+
+
+def installed_applications():
+    """Desktop applications for the chooser. The first data dir wins for each id."""
+    apps = []
+    seen = set()
+    for directory in _data_dirs():
+        folder = os.path.join(directory, "applications")
+        try:
+            names = os.listdir(folder)
+        except OSError:
+            continue
+        for filename in names:
+            if not filename.endswith(".desktop"):
+                continue
+            path = os.path.join(folder, filename)
+            if not os.path.isfile(path):
+                continue
+            app_id = filename[:-len(".desktop")]
+            if app_id in seen:
+                continue
+            fields = _read_desktop(path)
+            if not _show_in_menu(fields):
+                continue
+            seen.add(app_id)
+            apps.append({"id": app_id, "name": _shown_name(fields), "icon": fields["icon"]})
+    return sorted(apps, key=lambda app: locale.strxfrm(app["name"]))
+
+
+def app_name(app):
+    """Translated name for a desktop id, a .desktop path, or an executable path."""
+    if not isinstance(app, str) or not app:
+        return ""
+    if app.startswith("/") and not app.endswith(".desktop"):
+        return os.path.basename(app)
+    path = _find_desktop(app)
+    if not path:
+        return ""
+    return _shown_name(_read_desktop(path))
+
+
+def app_argv(app, args=""):
+    """Argv that starts `app` directly. Extra arguments are split and appended.
+
+    Field codes in a desktop Exec line are removed. This does not use a shell.
+    An empty list means the application could not be found.
+    """
+    if not isinstance(app, str) or not app:
+        return []
+    if not isinstance(args, str):
+        args = ""
+    if app.startswith("/") and not app.endswith(".desktop"):
+        if not os.path.isfile(app):
+            return []
+        return [app] + _split_command(args)
+    path = _find_desktop(app)
+    if not path:
+        return []
+    fields = _read_desktop(path)
+    if not fields["exec"]:
+        return []
+    return _argv_from_exec(fields["exec"], fields["icon"], args)
+
+
+def launch_app(app, args=""):
+    """Start an application directly. Under uwsm, wrap it the way run() wraps a command, without a shell."""
+    argv = app_argv(app, args)
+    if not argv:
+        log(f"app: can't find {app}")
+        return None
+    if os.environ.get("UWSM_WAIT_VARNAMES") or _uwsm_session():
+        argv = ["uwsm", "app", "--"] + argv
+    return subprocess.Popen(argv, env=session_env(), start_new_session=True,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
 def hyprland():
     return bool(os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"))
 
@@ -1866,6 +2236,9 @@ def _validate_key_list(keys, where, seen=None):
             if not isinstance(spec[field], str):
                 raise ValueError(f"{where}: {field} must be text")
             Keyboard.codes(spec[field])  # validate now, not on first press
+        for field in ("app", "args"):
+            if field in spec and not isinstance(spec[field], str):
+                raise ValueError(f"{where}: {field} must be text")
         if "sequence" in spec:
             Keyboard.steps(spec["sequence"])
         folder = spec.get("folder")
@@ -2210,8 +2583,15 @@ class App:
 
     def draw_key(self, i, pressed=False):
         now = time.time()
-        self.deck.key_image(i, jpeg(self.key_image(i, pressed, when=now)))
+        self.deck.key_image(i, self._key_jpeg(i, pressed, now))
         self._note_anim(i, pressed, now)
+
+    def _key_jpeg(self, i, pressed, now):
+        spec = self.keys()[i]
+        pressed = pressed or i in self.repeating
+        if "wallpaper_theme" in spec or "set_theme" in spec:
+            return jpeg(self.key_image(i, pressed, when=now))
+        return key_jpeg(spec, self.theme, pressed, now)
 
     def _note_anim(self, i, pressed, now):
         try:
@@ -2255,10 +2635,16 @@ class App:
         return soon if moving else None
 
     def draw_due_animations(self):
-        """Send the next frame of any animated key. Static keys are left as they are."""
+        """Send the next frame of any animated key. Static keys are left as they are.
+
+        Sending stops once this wake has used its time budget. The following
+        wake continues with the keys that are still due, and a key press can
+        be read in between.
+        """
         if not self.deck or not self.cfg:
             return
         now = time.time()
+        started = time.perf_counter()
         sent = 0
         for i, spec in enumerate(self.keys()):
             if not isinstance(spec, dict) or self.flash_until.get(i, 0) > now:
@@ -2274,7 +2660,7 @@ class App:
                 continue
             self.draw_key(i, pressed=i in self.held)
             sent += 1
-            if sent >= ANIM_PER_WAKE:
+            if sent >= 1 and time.perf_counter() - started >= _ANIM_BUDGET_S:
                 return
 
     def draw_keys(self):
@@ -2559,6 +2945,9 @@ class App:
                 proc = run(spec["exec"])
                 if spec.get("confirm"):
                     threading.Thread(target=self.confirm, args=(i, proc, page, profile, folders), daemon=True).start()
+            if isinstance(spec.get("app"), str) and spec.get("app"):
+                extra = spec.get("args") if isinstance(spec.get("args"), str) else ""
+                launch_app(spec["app"], extra)
             if "media" in spec:
                 if shutil_which("playerctl"):
                     run_quiet(["playerctl", spec["media"]])

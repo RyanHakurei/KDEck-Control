@@ -90,6 +90,30 @@ def test_partial_gif_is_composited():
         assert _rgb(gd.render_key(spec, theme, when=0.15)) == (255, 0, 0)
 
 
+def test_authored_twenty_ms_is_kept():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "fast20.gif")
+        _save_gif(path, [Image.new("RGB", (8, 8), (255, 0, 0)),
+                         Image.new("RGB", (8, 8), (0, 0, 255))], duration=20)
+        _frames, durations, _token = gd.key_animation({"image": path})
+        assert abs(durations[0] - 0.02) < 1e-6
+        assert abs(sum(durations) - 0.04) < 1e-6
+
+
+def test_identical_frames_are_one_hold():
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "hold.gif")
+        red = Image.new("RGB", (8, 8), (255, 0, 0))
+        blue = Image.new("RGB", (8, 8), (0, 0, 255))
+        _save_gif(path, [red, red.copy(), blue], duration=20)
+        frames, durations, _token = gd.key_animation({"image": path})
+        assert len(frames) == 2
+        assert abs(durations[0] - 0.04) < 1e-6
+        assert abs(durations[1] - 0.02) < 1e-6
+        assert frames[0].getpixel((1, 1))[:3] == (255, 0, 0)
+        assert frames[1].getpixel((1, 1))[:3] == (0, 0, 255)
+
+
 def test_still_image_is_not_an_animation():
     theme = dict(gd.THEME_DEFAULTS)
     with tempfile.TemporaryDirectory() as tmp:
@@ -151,8 +175,7 @@ def test_only_due_keys_are_sent():
 
         assert app._anim_delay() == 0.0
         app.draw_due_animations()
-        assert app.deck.sent == [0, 1, 2]  # a few per wake, so input is not stalled
-        app.draw_due_animations()
+        # Encoded frames are cheap, so one short wake sends every due key.
         assert app.deck.sent == [0, 1, 2, 3]
         assert 5 not in app.deck.sent
         assert app._anim_delay() > 0
@@ -189,6 +212,8 @@ if __name__ == "__main__":
     test_frame_clock()
     test_gif_plays_on_the_key()
     test_partial_gif_is_composited()
+    test_authored_twenty_ms_is_kept()
+    test_identical_frames_are_one_hold()
     test_still_image_is_not_an_animation()
     test_folder_mosaic_stays_still()
     test_only_due_keys_are_sent()

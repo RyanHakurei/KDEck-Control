@@ -1,0 +1,17 @@
+# Pool, dataset, and ARC readings from the ZFS plugin for KDE System Monitor.
+# follow_theme keeps these keys on the start profile's theme and colour tweaks.
+
+follow_theme = true
+start_page = "ZFS"
+
+[[page]]
+name = "ZFS"
+keys = [
+  { stat = "zfs", label = "ZFS" },
+  { stat = "zfs-health", label = "HEALTH" },
+  { stat = "zfs-frag", label = "FRAG" },
+  { stat = "zfs-io", label = "ZFS IO" },
+  { stat = "zfs-data", label = "DATA" },
+  { stat = "arc", label = "ARC" },
+  { stat = "arc-hit", label = "HITS" },
+]

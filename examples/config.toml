@@ -36,8 +36,10 @@
 #                                            leaves the folder too.
 #            back    = true                  this key leaves the folder
 #            profile = "gaming"              switch profile
-#            stat    = "cpu"                 a live KDE System Monitor reading
-#                                            (cpu, ram, gpu, vram, disk, net, zfs, arc, …).
+#            stat    = "cpu"                 a live KDE System Monitor reading.
+#                                            The system-stats profile ships with the app
+#                                            (cpu, ram, swap, disk, gpu, vram, net, io).
+#                                            ZFS and ARC are the separate zfs add-on.
 #                                            Colours follow this profile's theme.
 #                                            Another action on the same key still
 #                                            runs when the key is pressed.
@@ -59,6 +61,12 @@ start_profile = "desktop"
 brightness = 70
 volume_step = 2        # percent per dial click
 clock_format = "%H:%M"
+
+# Lock the clock screen's now-playing line to these playerctl names.
+# Leave the key out to follow whichever player is active. A name matches that
+# player and its instances (firefox matches firefox.instance123). A * or ? is
+# a wildcard. Anything else is ignored and does not appear on the screen.
+# media_players = ["spotify", "firefox"]
 
 # Switch profile by the focused window (Hyprland, Sway, i3, niri and X11
 # desktops; not yet on GNOME or KDE Plasma under Wayland). Rules are

@@ -1,4 +1,4 @@
-# Live readings from KDE System Monitor (ksystemstats).
+# Built-in profile. Live readings come from KDE System Monitor (ksystemstats).
 # follow_theme keeps these keys on the start profile's theme and colour tweaks.
 # Pick a theme under Look, or on the deck's settings page, to give this profile its own.
 
@@ -20,16 +20,4 @@ keys = [
   { stat = "vram", label = "VRAM" },
   { stat = "net", label = "NET" },
   { stat = "io", label = "IO" },
-]
-
-[[page]]
-name = "ZFS"
-keys = [
-  { stat = "zfs", label = "ZFS" },
-  { stat = "zfs-health", label = "HEALTH" },
-  { stat = "zfs-frag", label = "FRAG" },
-  { stat = "zfs-io", label = "ZFS IO" },
-  { stat = "zfs-data", label = "DATA" },
-  { stat = "arc", label = "ARC" },
-  { stat = "arc-hit", label = "HITS" },
 ]

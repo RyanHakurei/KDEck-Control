@@ -1,14 +1,20 @@
+#include "Media.hpp"
 #include "Types.hpp"
 
 #include <toml++/toml.hpp>
 
 #include <QDebug>
+#include <algorithm>
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QRegularExpression>
 #include <QSaveFile>
 #include <QStandardPaths>
+#include <QStringList>
 
 namespace galleon {
 namespace {
@@ -41,6 +47,36 @@ bool fromBool(const View &node, bool fallback = false)
     if (auto value = node.template value<bool>())
         return *value;
     return fallback;
+}
+
+template <typename View>
+double fromDouble(const View &node, double fallback)
+{
+    if (!node)
+        return fallback;
+    if (auto value = node.template value<double>())
+        return *value;
+    if (auto value = node.template value<int64_t>())
+        return static_cast<double>(*value);
+    return fallback;
+}
+
+QList<SwitchRule> rulesFromArray(const toml::array *array)
+{
+    QList<SwitchRule> rules;
+    if (!array)
+        return rules;
+    for (auto &&node : *array) {
+        const toml::table *table = node.as_table();
+        if (!table)
+            continue;
+        SwitchRule rule;
+        rule.classPattern = fromToml((*table)["class"]);
+        rule.titlePattern = fromToml((*table)["title"]);
+        rule.profile = fromToml((*table)["profile"]);
+        rules.append(rule);
+    }
+    return rules;
 }
 
 QColor parseColour(const QString &text, const QColor &fallback)
@@ -211,6 +247,8 @@ KeySpec keyFromTable(const toml::table &table, int depth)
     key.key = fromToml(table["key"]);
     key.keys = fromToml(table["keys"]);
     key.exec = fromToml(table["exec"]);
+    key.app = fromToml(table["app"]);
+    key.args = fromToml(table["args"]);
     key.media = fromToml(table["media"]);
     key.page = fromToml(table["page"]);
     key.profile = fromToml(table["profile"]);
@@ -304,9 +342,10 @@ QColor Theme::colour(const QString &value) const
 bool KeySpec::isEmpty() const
 {
     return label.isEmpty() && icon.isEmpty() && image.isEmpty() && key.isEmpty() && keys.isEmpty()
-        && exec.isEmpty() && media.isEmpty() && page.isEmpty() && profile.isEmpty() && stat.isEmpty()
-        && sequence.isEmpty() && repeat.isEmpty() && setTheme.isEmpty() && folder.isEmpty() && !back
-        && !wallpaperTheme && !hasBrightness && fg.isEmpty() && bg.isEmpty() && border.isEmpty();
+        && exec.isEmpty() && app.isEmpty() && args.isEmpty() && media.isEmpty() && page.isEmpty() && profile.isEmpty() && stat.isEmpty()
+        && sequence.isEmpty() && hold.isEmpty() && repeat.isEmpty() && setTheme.isEmpty() && folder.isEmpty() && !back
+        && !wallpaperTheme && !hasBrightness && fg.isEmpty() && bg.isEmpty() && border.isEmpty()
+        && stepMs == 40 && repeatMs == 100;
 }
 
 QString KeySpec::actionKind() const
@@ -321,6 +360,8 @@ QString KeySpec::actionKind() const
         return QStringLiteral("key");
     if (!keys.isEmpty())
         return QStringLiteral("shortcut");
+    if (!app.isEmpty() || !args.isEmpty())
+        return QStringLiteral("app");
     if (!exec.isEmpty())
         return QStringLiteral("command");
     if (!media.isEmpty())
@@ -360,13 +401,81 @@ QString Config::configDir()
     return configHome + QStringLiteral("/galleon-deck");
 }
 
+namespace {
+
+QString examplesDir()
+{
+    QStringList candidates{QString::fromUtf8(GALLEAN_EXAMPLES_DIR)};
+#ifdef GALLEAN_EXAMPLES_SRC
+    candidates.append(QString::fromUtf8(GALLEAN_EXAMPLES_SRC));
+#endif
+    for (const QString &candidate : candidates) {
+        if (QFileInfo::exists(candidate + QStringLiteral("/config.toml")))
+            return candidate;
+    }
+    return {};
+}
+
+// The System Stats pages used to be an add-on. They ship with the app now.
+// Copy the profile only when it is missing, so an edited copy is left alone.
+void ensureBuiltinProfiles()
+{
+    const QString dir = Config::configDir();
+    if (!QFileInfo::exists(dir + QStringLiteral("/config.toml")))
+        return;
+    const QString dest = dir + QStringLiteral("/profiles/system-stats.toml");
+    if (QFileInfo::exists(dest))
+        return;
+    QString source;
+    QStringList candidates{QString::fromUtf8(GALLEAN_EXAMPLES_DIR)};
+#ifdef GALLEAN_EXAMPLES_SRC
+    candidates.append(QString::fromUtf8(GALLEAN_EXAMPLES_SRC));
+#endif
+    for (const QString &candidate : candidates) {
+        const QString path = candidate + QStringLiteral("/profiles/system-stats.toml");
+        if (QFileInfo::exists(path)) {
+            source = path;
+            break;
+        }
+    }
+    if (source.isEmpty())
+        return;
+    QDir().mkpath(dir + QStringLiteral("/profiles"));
+    QFile::copy(source, dest);
+}
+
+// Drop the old add-on record when it only owns the built-in profile. Removing
+// the add-on from the list would otherwise delete that profile.
+void retireSystemStatsAddon()
+{
+    const QString state = QStandardPaths::writableLocation(QStandardPaths::StateLocation)
+        + QStringLiteral("/galleon-deck/addons/system-stats.json");
+    QFile file(state);
+    if (!file.open(QIODevice::ReadOnly))
+        return;
+    const QJsonArray files = QJsonDocument::fromJson(file.readAll()).object().value(QStringLiteral("files")).toArray();
+    file.close();
+    if (files.isEmpty())
+        return;
+    const QString profile = Config::configDir() + QStringLiteral("/profiles/system-stats.toml");
+    for (const QJsonValue &value : files) {
+        if (value.toString() != profile)
+            return;
+    }
+    QFile::remove(state);
+}
+
+} // namespace
+
 bool Config::ensureExamples()
 {
+    ensureBuiltinProfiles();
+    retireSystemStatsAddon();
     const QString dir = configDir();
     if (QFileInfo::exists(dir + QStringLiteral("/config.toml")))
         return true;
-    const QString examples = QString::fromUtf8(GALLEAN_EXAMPLES_DIR);
-    if (!QFileInfo::exists(examples + QStringLiteral("/config.toml")))
+    const QString examples = examplesDir();
+    if (examples.isEmpty())
         return false;
     QDir().mkpath(dir);
     const auto entries = QDir(examples).entryInfoList(QDir::Files | QDir::Dirs | QDir::NoDotAndDotDot);
@@ -412,6 +521,58 @@ Config Config::load()
     if (config.clockFormat.isEmpty())
         config.clockFormat = QStringLiteral("%H:%M");
     config.startProfile = fromToml(root["start_profile"]);
+    if (const toml::array *players = root["media_players"].as_array()) {
+        for (auto &&node : *players) {
+            if (auto value = node.value<std::string>()) {
+                const QString name = normalizeMediaPlayer(QString::fromStdString(*value));
+                if (!name.isEmpty() && !config.mediaPlayers.contains(name))
+                    config.mediaPlayers.append(name);
+            }
+        }
+    }
+    if (const toml::table *addons = root["addons"].as_table()) {
+        config.addonDir = fromToml((*addons)["dir"]);
+        if (config.addonDir.startsWith(QLatin1Char('~')))
+            config.addonDir = QDir::homePath() + config.addonDir.mid(1);
+    }
+    if (const toml::table *wallpaper = root["wallpaper_theme"].as_table()) {
+        config.wallpaperAuto = fromBool((*wallpaper)["auto"]);
+        config.wallpaperCommand = fromToml((*wallpaper)["command"]);
+        const QString font = fromToml((*wallpaper)["font"]);
+        const QString clockFont = fromToml((*wallpaper)["clock_font"]);
+        if (!font.isEmpty())
+            config.wallpaperFont = font;
+        if (!clockFont.isEmpty())
+            config.wallpaperClockFont = clockFont;
+    }
+    if (const toml::table *transition = root["transition"].as_table()) {
+        config.transitionEnabled = fromBool((*transition)["enabled"], true);
+        config.transitionSpeed = fromDouble((*transition)["speed"], 1.0);
+        config.transitionHold = fromDouble((*transition)["hold"], 0.5);
+    }
+    if (const toml::table *boot = root["boot"].as_table()) {
+        config.bootEnabled = fromBool((*boot)["enabled"], true);
+        config.bootSpeed = fromDouble((*boot)["speed"], 1.0);
+        const QString title = fromToml((*boot)["title"]);
+        if (!title.isEmpty())
+            config.bootTitle = title;
+        if (const toml::array *lines = (*boot)["lines"].as_array()) {
+            for (auto &&node : *lines) {
+                if (auto value = node.value<std::string>())
+                    config.bootLines.append(QString::fromStdString(*value));
+            }
+        }
+        config.bootLogo = fromToml((*boot)["logo"]);
+        config.bootGif = fromToml((*boot)["gif"]);
+    }
+    if (const toml::table *automatic = root["auto_switch"].as_table()) {
+        config.autoFallback = fromToml((*automatic)["fallback"]);
+        config.autoRules = rulesFromArray((*automatic)["rules"].as_array());
+    }
+    if (config.bootLines.isEmpty()) {
+        config.bootLines = {QStringLiteral("DECK LINK 1B1C:2B18|OK"), QStringLiteral("PROFILES|LOADED"),
+                            QStringLiteral("KEYS|ENCRYPTED"), QStringLiteral("DIALS|READY")};
+    }
 
     const QDir themeDir(config.dir + QStringLiteral("/themes"));
     const auto themeFiles = themeDir.entryList({QStringLiteral("*.toml")}, QDir::Files, QDir::Name);
@@ -453,8 +614,12 @@ Config Config::load()
         profile.logo = fromToml(table["logo"]);
         profile.settingsPage = fromBool(table["settings_page"], true);
         profile.themeName = fromToml(table["theme"]);
-        const bool follow = table.contains("follow_theme") && fromToml(table["theme"]).isEmpty();
-        if (profile.themeName.isEmpty() && !follow)
+        if (table.contains("follow_theme") && profile.themeName.isEmpty()) {
+            profile.followTheme = true;
+            profile.followTarget = fromToml(table["follow_theme"]);
+        }
+        profile.autoSwitch = rulesFromArray(table["auto_switch"].as_array());
+        if (profile.themeName.isEmpty() && !profile.followTheme)
             profile.themeName = QStringLiteral("amber");
 
         auto *pages = table["page"].as_array();
@@ -503,30 +668,113 @@ Config Config::load()
         return config;
     }
 
-    for (Profile &profile : config.profiles) {
-        if (profile.themeName.isEmpty()) {
-            const QString start = config.startProfile;
-            const Profile *source = config.profile(start);
-            profile.themeName = source ? source->themeName : QStringLiteral("amber");
-            if (profile.themeName.isEmpty())
-                profile.themeName = QStringLiteral("amber");
-        }
-        if (!config.themes.contains(profile.themeName)) {
-            config.error = QStringLiteral("profiles/%1.toml: unknown theme %2").arg(profile.name, profile.themeName);
-            config.profiles.clear();
-            return config;
-        }
-        profile.theme = config.themes.value(profile.themeName);
+    auto applyOverrides = [](Profile &profile) {
         toml::table file;
         try {
             file = toml::parse_file(profile.path.toStdString());
         } catch (const toml::parse_error &) {
-            continue;
+            return;
         }
         if (auto *overrides = file["theme_overrides"].as_table())
             applyThemeTable(profile.theme, *overrides);
+    };
+    auto bindTheme = [&](Profile &profile, const QString &themeName, const Theme &base) {
+        if (!config.themes.contains(themeName)) {
+            config.error = QStringLiteral("profiles/%1.toml: unknown theme %2").arg(profile.name, themeName);
+            return false;
+        }
+        // A follower keeps follow_theme in the file. themeName stays empty so a
+        // later save does not pin the copied colours as its own theme.
+        if (!profile.followTheme)
+            profile.themeName = themeName;
+        profile.theme = base;
+        applyOverrides(profile);
+        return true;
+    };
+
+    QStringList waiting;
+    for (Profile &profile : config.profiles) {
+        if (profile.followTheme) {
+            waiting.append(profile.name);
+            continue;
+        }
+        if (!bindTheme(profile, profile.themeName, config.themes.value(profile.themeName))) {
+            config.profiles.clear();
+            return config;
+        }
+    }
+    while (!waiting.isEmpty()) {
+        QStringList later;
+        for (const QString &name : waiting) {
+            Profile *profile = config.profile(name);
+            if (!profile)
+                continue;
+            const QString sourceName = profile->followTarget.isEmpty() ? config.startProfile : profile->followTarget;
+            const Profile *source = !sourceName.isEmpty() && sourceName != name ? config.profile(sourceName) : nullptr;
+            if (!source) {
+                if (!bindTheme(*profile, QStringLiteral("amber"), config.themes.value(QStringLiteral("amber")))) {
+                    config.profiles.clear();
+                    return config;
+                }
+                continue;
+            }
+            if (waiting.contains(sourceName) || later.contains(sourceName)) {
+                later.append(name);
+                continue;
+            }
+            if (!bindTheme(*profile, source->themeName, source->theme)) {
+                config.profiles.clear();
+                return config;
+            }
+        }
+        if (later.size() == waiting.size()) {
+            for (const QString &name : later) {
+                Profile *profile = config.profile(name);
+                if (profile && !bindTheme(*profile, QStringLiteral("amber"), config.themes.value(QStringLiteral("amber")))) {
+                    config.profiles.clear();
+                    return config;
+                }
+            }
+            break;
+        }
+        waiting = later;
     }
     return config;
+}
+
+qint64 configStamp()
+{
+    const QString dir = Config::configDir();
+    qint64 latest = 0;
+    QList<QFileInfo> files;
+    files.append(QFileInfo(dir + QStringLiteral("/config.toml")));
+    for (const QFileInfo &info : QDir(dir + QStringLiteral("/profiles")).entryInfoList({QStringLiteral("*.toml")}, QDir::Files))
+        files.append(info);
+    for (const QFileInfo &info : QDir(dir + QStringLiteral("/themes")).entryInfoList({QStringLiteral("*.toml")}, QDir::Files))
+        files.append(info);
+    for (const QFileInfo &info : files)
+        latest = std::max(latest, info.lastModified().toMSecsSinceEpoch());
+    return latest + files.size();
+}
+
+bool wallpaperThemeMatches(const QString &dir, const QString &imagePath)
+{
+    if (imagePath.isEmpty())
+        return true;
+    const QFileInfo image(imagePath);
+    if (!image.exists())
+        return false;
+    try {
+        const QString file = dir + QStringLiteral("/themes/wallpaper.toml");
+        const toml::table table = toml::parse_file(file.toStdString());
+        const auto source = table["source"].value<std::string>();
+        const auto stored = table["source_mtime"].value<int64_t>();
+        if (!source || !stored)
+            return false;
+        return QString::fromStdString(*source) == imagePath && *stored == image.lastModified().toSecsSinceEpoch();
+    } catch (const toml::parse_error &) {
+        return false;
+    }
 }
 
 QString configPath(const QString &dir, const QString &path)
@@ -611,6 +859,183 @@ bool removeTopLevel(const QString &path, const QString &key)
         }
     }
     return true;
+}
+
+namespace {
+
+int bracketDepth(const QString &line)
+{
+    int depth = 0;
+    QChar quote;
+    for (int i = 0; i < line.size(); ++i) {
+        const QChar ch = line.at(i);
+        if (!quote.isNull()) {
+            if (ch == QLatin1Char('\\') && quote == QLatin1Char('"'))
+                ++i;
+            else if (ch == quote)
+                quote = QChar();
+            continue;
+        }
+        if (ch == QLatin1Char('"') || ch == QLatin1Char('\''))
+            quote = ch;
+        else if (ch == QLatin1Char('#'))
+            break;
+        else if (ch == QLatin1Char('[') || ch == QLatin1Char('{'))
+            ++depth;
+        else if (ch == QLatin1Char(']') || ch == QLatin1Char('}'))
+            --depth;
+    }
+    return depth;
+}
+
+QString trailingComment(const QString &line)
+{
+    QChar quote;
+    for (int i = 0; i < line.size(); ++i) {
+        const QChar ch = line.at(i);
+        if (!quote.isNull()) {
+            if (ch == QLatin1Char('\\') && quote == QLatin1Char('"'))
+                ++i;
+            else if (ch == quote)
+                quote = QChar();
+            continue;
+        }
+        if (ch == QLatin1Char('"') || ch == QLatin1Char('\''))
+            quote = ch;
+        else if (ch == QLatin1Char('#'))
+            return line.mid(i);
+    }
+    return {};
+}
+
+int tableSection(const QStringList &lines, const QString &table, int *headerAt)
+{
+    const QRegularExpression header(QStringLiteral("^\\[%1\\]\\s*(?:#.*)?$").arg(QRegularExpression::escape(table)));
+    const QRegularExpression anyHeader(QStringLiteral("^\\[([^\\[\\]]+)\\]\\s*(?:#.*)?$"));
+    for (int i = 0; i < lines.size(); ++i) {
+        if (!header.match(lines.at(i)).hasMatch())
+            continue;
+        *headerAt = i;
+        for (int j = i + 1; j < lines.size(); ++j) {
+            if (anyHeader.match(lines.at(j)).hasMatch())
+                return j;
+        }
+        return lines.size();
+    }
+    *headerAt = -1;
+    return lines.size();
+}
+
+} // namespace
+
+bool assignTableKey(const QString &path, const QString &table, const QString &key, const QString &literal)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    QStringList lines = QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'));
+    file.close();
+    int headerAt = -1;
+    const int sectionEnd = tableSection(lines, table, &headerAt);
+    const QRegularExpression match(QStringLiteral("^\\s*%1\\s*=").arg(QRegularExpression::escape(key)));
+    const QString replacement = key + QStringLiteral(" = ") + literal;
+    if (headerAt >= 0) {
+        for (int i = headerAt + 1; i < sectionEnd; ++i) {
+            if (match.match(lines.at(i)).hasMatch()) {
+                lines[i] = replacement;
+                return writeText(path, lines.join(QLatin1Char('\n')));
+            }
+        }
+        lines.insert(headerAt + 1, replacement);
+        return writeText(path, lines.join(QLatin1Char('\n')));
+    }
+    if (!lines.isEmpty() && !lines.last().isEmpty())
+        lines.append(QString());
+    lines.append(QLatin1Char('[') + table + QLatin1Char(']'));
+    lines.append(replacement);
+    return writeText(path, lines.join(QLatin1Char('\n')));
+}
+
+bool removeTableKey(const QString &path, const QString &table, const QString &key)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    QStringList lines = QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'));
+    file.close();
+    int headerAt = -1;
+    const int sectionEnd = tableSection(lines, table, &headerAt);
+    if (headerAt < 0)
+        return true;
+    const QRegularExpression match(QStringLiteral("^\\s*%1\\s*=").arg(QRegularExpression::escape(key)));
+    for (int i = headerAt + 1; i < sectionEnd; ++i) {
+        if (!match.match(lines.at(i)).hasMatch())
+            continue;
+        lines.removeAt(i);
+        bool empty = true;
+        for (int j = headerAt + 1; j < sectionEnd - 1; ++j) {
+            const QString trimmed = lines.at(j).trimmed();
+            if (!trimmed.isEmpty() && !trimmed.startsWith(QLatin1Char('#'))) {
+                empty = false;
+                break;
+            }
+        }
+        if (empty) {
+            int drop = headerAt;
+            if (drop > 0 && lines.at(drop - 1).trimmed().isEmpty())
+                --drop;
+            const int count = headerAt - drop + 1;
+            for (int n = 0; n < count; ++n)
+                lines.removeAt(drop);
+        }
+        return writeText(path, lines.join(QLatin1Char('\n')));
+    }
+    return true;
+}
+
+bool replaceTableValue(const QString &path, const QString &table, const QString &key, const QString &literal)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly))
+        return false;
+    QStringList lines = QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'));
+    file.close();
+    int headerAt = -1;
+    const int sectionEnd = tableSection(lines, table, &headerAt);
+    if (headerAt < 0)
+        return false;
+    const QRegularExpression match(QStringLiteral("^\\s*%1\\s*=").arg(QRegularExpression::escape(key)));
+    for (int i = headerAt + 1; i < sectionEnd; ++i) {
+        if (!match.match(lines.at(i)).hasMatch())
+            continue;
+        int end = i;
+        int depth = bracketDepth(lines.at(i));
+        while (depth > 0 && end + 1 < sectionEnd) {
+            ++end;
+            depth += bracketDepth(lines.at(end));
+        }
+        QStringList replacement = literal.split(QLatin1Char('\n'));
+        if (replacement.isEmpty())
+            replacement.append(QString());
+        replacement[0] = key + QStringLiteral(" = ") + replacement.at(0);
+        if (replacement.size() == 1 && end == i) {
+            const QString comment = trailingComment(lines.at(i));
+            if (!comment.isEmpty()) {
+                const int column = lines.at(i).size() - comment.size();
+                if (replacement[0].size() < column)
+                    replacement[0] = replacement[0].leftJustified(column);
+                else
+                    replacement[0] += QStringLiteral("  ");
+                replacement[0] += comment;
+            }
+        }
+        for (int n = i; n <= end; ++n)
+            lines.removeAt(i);
+        for (int n = 0; n < replacement.size(); ++n)
+            lines.insert(i + n, replacement.at(n));
+        return writeText(path, lines.join(QLatin1Char('\n')));
+    }
+    return false;
 }
 
 } // namespace galleon

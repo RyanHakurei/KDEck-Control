@@ -41,6 +41,7 @@ ACTIONS = [  # (label, spec key)
     ("Key sequence", "sequence"),
     ("Repeat a key (toggle)", "repeat"),
     ("Run a command", "exec"),
+    ("Open an application", "app"),
     ("Media control", "media"),
     ("Go to page", "page"),
     ("Folder", "folder"),
@@ -388,7 +389,7 @@ class Window(Adw.ApplicationWindow):
         bar = Gtk.Box(spacing=6)
         self.page_buttons = Gtk.Box(css_classes=["linked"])
         bar.append(self.page_buttons)
-        bar.append(self.menu_button("list-add-symbolic", "Page actions", [
+        bar.append(self.menu_button("document-edit-symbolic", "Page actions", [
             ("Add page…", self.add_page), ("Rename page…", self.rename_page), ("Delete page…", self.delete_page),
             ("Move page left", lambda: self.move_page(-1)), ("Move page right", lambda: self.move_page(1)),
             ("Make start page", self.make_start_page),
@@ -475,7 +476,7 @@ class Window(Adw.ApplicationWindow):
         slots = self.slot_list() or []
         animated = any(isinstance(spec, dict) and gd.key_animation(spec) for spec in slots)
         if animated and self._anim_timer is None:
-            self._anim_timer = GLib.timeout_add(50, self.tick_key_animations)
+            self._anim_timer = GLib.timeout_add(20, self.tick_key_animations)
         elif not animated and self._anim_timer is not None:
             GLib.source_remove(self._anim_timer)
             self._anim_timer = None
@@ -755,6 +756,17 @@ class Window(Adw.ApplicationWindow):
             confirm = Adw.SwitchRow(title="Flash ✓ / ✗ when it finishes", active=bool(spec.get("confirm")))
             confirm.connect("notify::active", lambda r, _p: self.set_field("confirm", r.get_active() or ""))
             group.add(confirm)
+        elif kind == "app":
+            chosen = gd.app_name(spec.get("app", "")) or "No application chosen"
+            row = Adw.ActionRow(title="Application", subtitle=chosen)
+            choose = Gtk.Button(label="Choose…", valign=Gtk.Align.CENTER)
+            choose.connect("clicked", lambda _b: self.choose_application())
+            row.add_suffix(choose)
+            group.add(row)
+            args = Adw.EntryRow(title="Arguments", text=str(spec.get("args", "")))
+            args.connect("changed", lambda r: self.set_field("args", r.get_text()))
+            group.add(args)
+            group.add(Adw.ActionRow(title="Starts the application directly. This is not a shell command."))
         elif kind == "media":
             row = Adw.ComboRow(title="Control", model=Gtk.StringList.new(MEDIA),
                                selected=MEDIA.index(spec["media"]) if spec.get("media") in MEDIA else 0)
@@ -832,6 +844,9 @@ class Window(Adw.ApplicationWindow):
                 spec.pop(k, None)
         if kind != "exec":
             spec.pop("confirm", None)
+        if kind != "app":
+            spec.pop("app", None)
+            spec.pop("args", None)
         if kind != "sequence":
             spec.pop("hold", None)
             spec.pop("step_ms", None)
@@ -1006,6 +1021,55 @@ class Window(Adw.ApplicationWindow):
         search.connect("search-changed", searched)
         dialog.set_child(box)
         dialog.present(self)
+
+    def choose_application(self):
+        """Pick an installed application. Choosing one does not launch it."""
+        spec = self.spec()
+        if spec is None:
+            return
+        apps = gd.installed_applications()
+        win = Gtk.Window(title="Choose application", modal=True, transient_for=self,
+                         default_width=420, default_height=520, destroy_with_parent=True)
+        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6)
+        header = Adw.HeaderBar()
+        box.append(header)
+        search = Gtk.SearchEntry(placeholder_text="Search applications",
+                                 margin_start=12, margin_end=12, margin_bottom=6)
+        box.append(search)
+        listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
+        for app in apps:
+            row = Gtk.ListBoxRow()
+            row.app_id = app["id"]
+            row.app_name = app["name"]
+            row.set_child(Gtk.Label(label=app["name"], xalign=0, margin_top=6, margin_bottom=6,
+                                    margin_start=12, margin_end=12))
+            listbox.append(row)
+
+        def visible(row):
+            needle = search.get_text().casefold()
+            if not needle:
+                return True
+            return needle in row.app_name.casefold() or needle in row.app_id.casefold()
+
+        listbox.set_filter_func(visible)
+
+        def picked(_box, row):
+            current = self.spec() or {}
+            previous = gd.app_name(current.get("app", ""))
+            self.set_field("app", row.app_id)
+            current = self.spec()
+            if current is not None and str(current.get("label", "")) in ("", previous):
+                name = gd.app_name(row.app_id)
+                if name:
+                    self.set_field("label", name)
+            win.close()
+            self.build_key_page()
+
+        listbox.connect("row-activated", picked)
+        search.connect("search-changed", lambda _entry: listbox.invalidate_filter())
+        box.append(Gtk.ScrolledWindow(child=listbox, vexpand=True))
+        win.set_child(box)
+        win.present()
 
     def pick_file(self, title, mime_types, done, patterns=()):
         dialog = Gtk.FileDialog(title=title)

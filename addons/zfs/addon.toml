@@ -1,0 +1,4 @@
+title = "ZFS"
+version = "1.0.0"
+requires = "1.3.0"
+description = "Pool, dataset, and ARC keys. Needs the ZFS plugin for KDE System Monitor."

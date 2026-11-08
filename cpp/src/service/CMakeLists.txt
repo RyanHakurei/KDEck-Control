@@ -5,3 +5,5 @@ add_executable(galleon-deck
 
 target_link_libraries(galleon-deck PRIVATE galleon-core Qt6::Gui)
 kde_target_enable_exceptions(galleon-deck PRIVATE)
+
+install(TARGETS galleon-deck ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})

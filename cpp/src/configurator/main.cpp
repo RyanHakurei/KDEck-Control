@@ -2,6 +2,7 @@
 
 #include <KAboutData>
 #include <KIconTheme>
+#include <KLocalizedQmlContext>
 #include <KLocalizedString>
 
 #include <QApplication>
@@ -13,6 +14,10 @@
 
 int main(int argc, char *argv[])
 {
+    // A shell that did not inherit the Plasma session still has to read the
+    // fonts selected in System Settings. Do not replace a theme the user set.
+    if (qEnvironmentVariableIsEmpty("QT_QPA_PLATFORMTHEME"))
+        qputenv("QT_QPA_PLATFORMTHEME", QByteArrayLiteral("kde"));
     KIconTheme::initTheme();
     QApplication app(argc, argv);
     QApplication::setApplicationName(QStringLiteral("galleon-deck"));
@@ -35,6 +40,7 @@ int main(int argc, char *argv[])
 
     galleon::Controller controller;
     QQmlApplicationEngine engine;
+    KLocalization::setupLocalizedContext(&engine);
     engine.rootContext()->setContextProperty(QStringLiteral("controller"), &controller);
     engine.addImageProvider(QStringLiteral("keys"), new galleon::KeyImageProvider(&controller));
 

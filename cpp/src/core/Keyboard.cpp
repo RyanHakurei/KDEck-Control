@@ -1,6 +1,11 @@
 #include "Keyboard.hpp"
 
 #include <QHash>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QProcess>
+#include <QRegularExpression>
 #include <QThread>
 
 #include <libevdev/libevdev-uinput.h>
@@ -102,6 +107,35 @@ void Keyboard::tap(const QList<int> &codes)
 {
     press(codes);
     release(codes);
+}
+
+void Keyboard::ensureNumlock()
+{
+    if (m_numlockChecked)
+        return;
+    m_numlockChecked = true;
+    if (!qEnvironmentVariableIsEmpty("HYPRLAND_INSTANCE_SIGNATURE")) {
+        QProcess process;
+        process.start(QStringLiteral("hyprctl"), {QStringLiteral("devices"), QStringLiteral("-j")});
+        if (!process.waitForFinished(800))
+            return;
+        const QJsonArray keyboards = QJsonDocument::fromJson(process.readAllStandardOutput()).object().value(QStringLiteral("keyboards")).toArray();
+        for (const QJsonValue &value : keyboards) {
+            const QJsonObject keyboard = value.toObject();
+            if (keyboard.value(QStringLiteral("name")).toString() == QLatin1String("galleon-deck")
+                && !keyboard.value(QStringLiteral("numLock")).toBool())
+                tap({KEY_NUMLOCK});
+        }
+        return;
+    }
+    if (qEnvironmentVariableIsEmpty("WAYLAND_DISPLAY") && !qEnvironmentVariableIsEmpty("DISPLAY")) {
+        QProcess process;
+        process.start(QStringLiteral("xset"), {QStringLiteral("q")});
+        if (!process.waitForFinished(800))
+            return;
+        if (QString::fromUtf8(process.readAllStandardOutput()).contains(QRegularExpression(QStringLiteral("Num Lock:\\s+off"))))
+            tap({KEY_NUMLOCK});
+    }
 }
 
 void Keyboard::typeSequence(const QList<QList<int>> &steps, const QList<int> &hold, int stepMs)
