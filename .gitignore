@@ -1,3 +1,6 @@
 __pycache__/
 *.pyc
 *.tmp
+
+# Local PKGBUILD testing and package installs. Never commit this directory.
+testing/
