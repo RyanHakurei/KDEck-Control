@@ -6,7 +6,7 @@
 #include <QList>
 #include <QString>
 
-namespace galleon {
+namespace kdeck {
 
 inline constexpr int Keys = 12;
 inline constexpr int KeyPx = 160;
@@ -166,4 +166,4 @@ bool removeTableKey(const QString &path, const QString &table, const QString &ke
 // A single-line value keeps a trailing comment. Returns false when the key is absent.
 bool replaceTableValue(const QString &path, const QString &table, const QString &key, const QString &literal);
 
-} // namespace galleon
+} // namespace kdeck

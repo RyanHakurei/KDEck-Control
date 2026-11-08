@@ -16,7 +16,7 @@
 #include <QTimer>
 #include <QUrl>
 
-namespace galleon {
+namespace kdeck {
 namespace {
 
 struct MediaCache {
@@ -131,7 +131,7 @@ QString artFile(const QString &url)
     if (!url.startsWith(QLatin1String("http://")) && !url.startsWith(QLatin1String("https://")))
         return {};
 
-    const QString cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + QStringLiteral("/galleon-deck");
+    const QString cache = QStandardPaths::writableLocation(QStandardPaths::GenericCacheLocation) + QStringLiteral("/kdeck-control");
     QDir().mkpath(cache);
     const QString dest = cache + QLatin1Char('/')
         + QString::fromLatin1(QCryptographicHash::hash(url.toUtf8(), QCryptographicHash::Sha1).toHex().left(16));
@@ -140,7 +140,7 @@ QString artFile(const QString &url)
 
     QNetworkAccessManager manager;
     QNetworkRequest request{QUrl(url)};
-    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("galleon-deck"));
+    request.setHeader(QNetworkRequest::UserAgentHeader, QStringLiteral("kdeck-control"));
     QNetworkReply *reply = manager.get(request);
     QEventLoop loop;
     QTimer timer;
@@ -294,4 +294,4 @@ QString normalizeMediaPlayer(const QString &raw)
     return playerStem(name);
 }
 
-} // namespace galleon
+} // namespace kdeck

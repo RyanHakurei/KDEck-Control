@@ -15,7 +15,7 @@
 #include <algorithm>
 #include <stdexcept>
 
-namespace galleon {
+namespace kdeck {
 namespace {
 
 QString canonicalName(QString name)
@@ -39,7 +39,7 @@ Keyboard::Keyboard()
     m_dev = libevdev_new();
     if (!m_dev)
         return;
-    libevdev_set_name(m_dev, "galleon-deck");
+    libevdev_set_name(m_dev, "kdeck-control");
     libevdev_enable_event_type(m_dev, EV_KEY);
     for (int code = 1; code < 0x2ff; ++code)
         libevdev_enable_event_code(m_dev, EV_KEY, code, nullptr);
@@ -122,7 +122,7 @@ void Keyboard::ensureNumlock()
         const QJsonArray keyboards = QJsonDocument::fromJson(process.readAllStandardOutput()).object().value(QStringLiteral("keyboards")).toArray();
         for (const QJsonValue &value : keyboards) {
             const QJsonObject keyboard = value.toObject();
-            if (keyboard.value(QStringLiteral("name")).toString() == QLatin1String("galleon-deck")
+            if (keyboard.value(QStringLiteral("name")).toString() == QLatin1String("kdeck-control")
                 && !keyboard.value(QStringLiteral("numLock")).toBool())
                 tap({KEY_NUMLOCK});
         }
@@ -161,4 +161,4 @@ void Keyboard::typeSequence(const QList<QList<int>> &steps, const QList<int> &ho
         release(hold);
 }
 
-} // namespace galleon
+} // namespace kdeck

@@ -1,4 +1,4 @@
 #!/bin/sh
 # Same add-on tool the Python app ships. Packages unpack into the config
 # directory the C++ service already reloads.
-exec python3 "@CMAKE_INSTALL_FULL_DATADIR@/galleon-deck/python/galleon_addon.py" "$@"
+exec python3 "@CMAKE_INSTALL_FULL_DATADIR@/kdeck-control/python/kdeck_addon.py" "$@"

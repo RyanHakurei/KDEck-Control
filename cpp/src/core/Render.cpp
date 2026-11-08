@@ -21,7 +21,7 @@
 #include <chrono>
 #include <cmath>
 
-namespace galleon {
+namespace kdeck {
 namespace {
 
 struct FontFace {
@@ -1113,4 +1113,4 @@ QList<KeySpec> settingsKeys(const Config &config, const QString &activeProfile)
     return keys;
 }
 
-} // namespace galleon
+} // namespace kdeck

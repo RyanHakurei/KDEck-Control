@@ -35,7 +35,7 @@
 #include <algorithm>
 #include <cstdlib>
 
-namespace galleon {
+namespace kdeck {
 namespace {
 
 QString strftimeNow(const QString &format)
@@ -90,17 +90,17 @@ QString statePath()
 {
     const QByteArray runtime = qgetenv("XDG_RUNTIME_DIR");
     const QString dir = runtime.isEmpty() ? QStringLiteral("/tmp") : QString::fromUtf8(runtime);
-    return dir + QStringLiteral("/galleon-deck.state");
+    return dir + QStringLiteral("/kdeck-control.state");
 }
 
 QString pythonDir()
 {
-    const QString installed = QFileInfo(QString::fromUtf8(GALLEAN_ADDON_SCRIPT)).absolutePath();
-    if (QFileInfo::exists(installed + QStringLiteral("/galleon_deck.py")))
+    const QString installed = QFileInfo(QString::fromUtf8(KDECK_ADDON_SCRIPT)).absolutePath();
+    if (QFileInfo::exists(installed + QStringLiteral("/kdeck_control.py")))
         return installed;
-#ifdef GALLEAN_ADDON_SRC
-    const QString source = QFileInfo(QString::fromUtf8(GALLEAN_ADDON_SRC)).absolutePath();
-    if (QFileInfo::exists(source + QStringLiteral("/galleon_deck.py")))
+#ifdef KDECK_ADDON_SRC
+    const QString source = QFileInfo(QString::fromUtf8(KDECK_ADDON_SRC)).absolutePath();
+    if (QFileInfo::exists(source + QStringLiteral("/kdeck_control.py")))
         return source;
 #endif
     return {};
@@ -135,7 +135,7 @@ QString focusSourceName()
 
 void writePidFile()
 {
-    QSaveFile file(runtimePath(QStringLiteral("galleon-deck.pid")));
+    QSaveFile file(runtimePath(QStringLiteral("kdeck-control.pid")));
     if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate))
         return;
     file.write(QByteArray::number(QCoreApplication::applicationPid()));
@@ -144,7 +144,7 @@ void writePidFile()
 
 void removePidFile()
 {
-    const QString path = runtimePath(QStringLiteral("galleon-deck.pid"));
+    const QString path = runtimePath(QStringLiteral("kdeck-control.pid"));
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
         return;
@@ -599,7 +599,7 @@ int Service::startPageIndex() const
 
 QList<KeySpec> Service::settingsKeys() const
 {
-    return galleon::settingsKeys(m_config, m_profile);
+    return kdeck::settingsKeys(m_config, m_profile);
 }
 
 QList<KeySpec> Service::currentKeys() const
@@ -722,7 +722,7 @@ void Service::drawLcd()
     const Profile *profile = currentProfile();
     LcdState state = keyboardStatus();
     fillMedia(state, m_config.mediaPlayers);
-    state.profile = m_profile.isEmpty() ? QStringLiteral("galleon-deck") : m_profile;
+    state.profile = m_profile.isEmpty() ? QStringLiteral("kdeck-control") : m_profile;
     state.page = profile && !profile->pages.isEmpty()
         ? placeLabel(profile->pages.at(m_page).name, profile->pages.at(m_page).keys, m_folderPath)
         : QString();
@@ -1417,7 +1417,7 @@ void Service::followWallpaper()
     const QString dir = pythonDir();
     if (dir.isEmpty())
         return;
-    const QString prelude = QStringLiteral("import galleon_deck as g\n"
+    const QString prelude = QStringLiteral("import kdeck_control as g\n"
                                            "cfg = {}\n"
                                            "try:\n"
                                            "    import tomllib\n"
@@ -1455,7 +1455,7 @@ void Service::applyWallpaperTheme()
     process.setProcessEnvironment(env);
     process.start(QStringLiteral("python3"),
                   {QStringLiteral("-c"),
-                   QStringLiteral("import galleon_deck as g\n"
+                   QStringLiteral("import kdeck_control as g\n"
                                   "cfg = {}\n"
                                   "try:\n"
                                   "    import tomllib\n"
@@ -1469,4 +1469,4 @@ void Service::applyWallpaperTheme()
     setTheme(QStringLiteral("wallpaper"));
 }
 
-} // namespace galleon
+} // namespace kdeck

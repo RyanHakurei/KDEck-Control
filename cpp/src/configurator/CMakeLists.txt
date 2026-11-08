@@ -1,23 +1,23 @@
-add_executable(galleon-deck-config
+add_executable(kdeck-control-config
     main.cpp
     Controller.cpp
 )
 
-ecm_add_qml_module(galleon-deck-config
-    URI org.kde.galleondeck
+ecm_add_qml_module(kdeck-control-config
+    URI org.kde.kdeckcontrol
     VERSION 1.0
     GENERATE_PLUGIN_SOURCE
 )
 
-ecm_target_qml_sources(galleon-deck-config
+ecm_target_qml_sources(kdeck-control-config
     SOURCES
         qml/Main.qml
 )
 
-kde_target_enable_exceptions(galleon-deck-config PRIVATE)
+kde_target_enable_exceptions(kdeck-control-config PRIVATE)
 
-target_link_libraries(galleon-deck-config PRIVATE
-    galleon-core
+target_link_libraries(kdeck-control-config PRIVATE
+    kdeck-core
     Qt6::Widgets
     Qt6::Quick
     Qt6::Qml
@@ -29,6 +29,6 @@ target_link_libraries(galleon-deck-config PRIVATE
     KF6::IconThemes
 )
 
-install(TARGETS galleon-deck-config ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
-install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../data/org.kde.galleondeck.desktop
+install(TARGETS kdeck-control-config ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
+install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/../../data/org.kde.kdeckcontrol.desktop
         DESTINATION ${KDE_INSTALL_APPDIR})

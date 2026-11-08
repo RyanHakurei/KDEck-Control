@@ -11,7 +11,7 @@
 
 #include <memory>
 
-namespace galleon {
+namespace kdeck {
 
 class Controller : public QObject {
     Q_OBJECT
@@ -413,4 +413,4 @@ private:
     Controller *m_controller;
 };
 
-} // namespace galleon
+} // namespace kdeck

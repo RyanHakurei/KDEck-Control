@@ -8,7 +8,7 @@ import org.kde.kirigami as Kirigami
 Kirigami.ApplicationWindow {
     id: window
 
-    title: controller.profile.length > 0 ? i18n("%1 — Galleon Deck", controller.profile) : i18n("Galleon Deck")
+    title: controller.profile.length > 0 ? i18n("%1 — KDEck Control", controller.profile) : i18n("KDEck Control")
     width: 1180
     height: 820
     minimumWidth: 1100
@@ -209,7 +209,7 @@ Kirigami.ApplicationWindow {
                     if (status.length === 0 || status === i18n("Unsaved changes"))
                         return ""
                     // The standing line only names the config directory. Real results still show.
-                    if (status.indexOf("/galleon-deck") !== -1 && status.indexOf(".toml") === -1)
+                    if (status.indexOf("/kdeck-control") !== -1 && status.indexOf(".toml") === -1)
                         return ""
                     return status
                 }
@@ -248,9 +248,9 @@ Kirigami.ApplicationWindow {
                 onTriggered: controller.openConfigFolder()
             },
             Kirigami.Action {
-                text: i18n("About Galleon Deck")
+                text: i18n("About KDEck Control")
                 icon.name: "help-about"
-                tooltip: i18n("About Galleon Deck")
+                tooltip: i18n("About KDEck Control")
                 displayHint: Kirigami.DisplayHint.KeepVisible | Kirigami.DisplayHint.IconOnly
                 onTriggered: aboutDialog.open()
             }
@@ -336,7 +336,7 @@ Kirigami.ApplicationWindow {
                                         Drag.supportedActions: Qt.MoveAction
                                         Drag.hotSpot.x: width / 2
                                         Drag.hotSpot.y: height / 2
-                                        Drag.mimeData: {"text/galleon-page": String(index)}
+                                        Drag.mimeData: {"text/kdeck-page": String(index)}
 
                                         DragHandler {
                                             id: pageDrag
@@ -363,7 +363,7 @@ Kirigami.ApplicationWindow {
                                             anchors.fill: parent
                                             enabled: !controller.pageIsSettings(pageButton.index)
                                             onDropped: function(drop) {
-                                                const text = drop.getDataAsString("text/galleon-page")
+                                                const text = drop.getDataAsString("text/kdeck-page")
                                                 const from = parseInt(text)
                                                 if (text.length > 0 && !isNaN(from) && from !== pageButton.index)
                                                     controller.movePageTo(from, pageButton.index)
@@ -487,7 +487,7 @@ Kirigami.ApplicationWindow {
                                         Drag.supportedActions: Qt.MoveAction
                                         Drag.hotSpot.x: width / 2
                                         Drag.hotSpot.y: height / 2
-                                        Drag.mimeData: {"text/galleon-key": String(index)}
+                                        Drag.mimeData: {"text/kdeck-key": String(index)}
 
                                         DragHandler {
                                             id: keyDrag
@@ -496,7 +496,7 @@ Kirigami.ApplicationWindow {
                                         DropArea {
                                             anchors.fill: parent
                                             onDropped: function(drop) {
-                                                const text = drop.getDataAsString("text/galleon-key")
+                                                const text = drop.getDataAsString("text/kdeck-key")
                                                 const from = parseInt(text)
                                                 if (text.length > 0 && from >= 0)
                                                     controller.swapKeys(from, keyButton.index)
@@ -1759,7 +1759,7 @@ Kirigami.ApplicationWindow {
                                 Layout.rightMargin: Kirigami.Units.largeSpacing
                                 wrapMode: Text.WordWrap
                                 text: controller.addonStatus.length ? controller.addonStatus
-                                      : i18n("Profiles, themes, and images from galleon-addon packages. The deck reloads them within a second.")
+                                      : i18n("Add-on packages from the previous program are not compatible yet.")
                             }
 
                             RowLayout {
@@ -1770,11 +1770,6 @@ Kirigami.ApplicationWindow {
                                     text: i18n("Install package")
                                     icon.name: "document-import"
                                     onClicked: addonDialog.open()
-                                }
-                                QQC2.Button {
-                                    text: i18n("Get add-ons")
-                                    icon.name: "globe"
-                                    onClicked: Qt.openUrlExternally("https://github.com/NLMP-DDHS/galleon-deck-addons/releases")
                                 }
                                 QQC2.Button {
                                     text: i18n("Refresh")
@@ -1833,7 +1828,7 @@ Kirigami.ApplicationWindow {
                                         Layout.fillWidth: true
                                         color: Kirigami.Theme.disabledTextColor
                                         text: modelData.compatible === false
-                                              ? i18n("Needs galleon-deck %1", modelData.requires)
+                                              ? i18n("Needs kdeck-control %1", modelData.requires)
                                               : (modelData.installed ? i18n("Installed %1", modelData.installed) : i18n("Not installed"))
                                     }
                                     RowLayout {
@@ -2054,7 +2049,7 @@ Kirigami.ApplicationWindow {
 
     QQC2.Dialog {
         id: aboutDialog
-        title: i18n("Galleon Deck")
+        title: i18n("KDEck Control")
         modal: true
         width: 420
         standardButtons: QQC2.Dialog.Close
@@ -2072,7 +2067,7 @@ Kirigami.ApplicationWindow {
                 text: i18n("Stream Deck support for the Corsair Galleon 100 SD keyboard on Linux.")
             }
             QQC2.Label {
-                text: i18n("galleon-deck contributors")
+                text: i18n("KDEck Control")
                 color: Kirigami.Theme.disabledTextColor
             }
             QQC2.Label {

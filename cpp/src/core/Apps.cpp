@@ -9,7 +9,7 @@
 
 #include <algorithm>
 
-namespace galleon {
+namespace kdeck {
 namespace {
 
 QString unescapeDesktop(const QString &text)
@@ -302,4 +302,4 @@ QStringList applicationArgv(const QString &app, const QString &args)
     return argvFromExec(fields.exec, fields.icon, args);
 }
 
-} // namespace galleon
+} // namespace kdeck

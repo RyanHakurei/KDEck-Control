@@ -38,7 +38,7 @@
 #include <map>
 #include <sstream>
 
-namespace galleon {
+namespace kdeck {
 namespace {
 
 QString tomlString(const QString &text)
@@ -133,7 +133,7 @@ QString leadingComments(const QString &path)
 {
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
-        return QStringLiteral("# galleon-deck profile.\n");
+        return QStringLiteral("# kdeck-control profile.\n");
     QStringList head;
     const auto lines = QString::fromUtf8(file.readAll()).split(QLatin1Char('\n'));
     for (const QString &line : lines) {
@@ -374,7 +374,7 @@ struct StatRow {
     const char *label;
 };
 
-// Titles and short labels match galleon_stats.STATS. The degree sign is written
+// Titles and short labels match kdeck_stats.STATS. The degree sign is written
 // as UTF-8 bytes so the source does not depend on how the compiler reads the file.
 const StatRow kStats[] = {
     {"cpu", "CPU usage", "CPU"},
@@ -553,7 +553,7 @@ QString formatNow(const QString &format)
 }
 
 QString addonPython();
-bool runGalleonImport(const QString &body, const QStringList &args, QString *output, QString *errorText, int timeoutMs);
+bool runKdeckImport(const QString &body, const QStringList &args, QString *output, QString *errorText, int timeoutMs);
 
 } // namespace
 
@@ -2213,18 +2213,18 @@ void Controller::restartBackend(bool replay)
 {
     flushEdits();
     QProcess unit;
-    unit.start(QStringLiteral("systemctl"), {QStringLiteral("--user"), QStringLiteral("cat"), QStringLiteral("galleon-deck.service")});
+    unit.start(QStringLiteral("systemctl"), {QStringLiteral("--user"), QStringLiteral("cat"), QStringLiteral("kdeck-control.service")});
     const bool installed = unit.waitForFinished(1500) && unit.exitCode() == 0;
     bool ok = false;
     QString err;
     if (installed) {
         QProcess process;
-        process.start(QStringLiteral("systemctl"), {QStringLiteral("--user"), QStringLiteral("restart"), QStringLiteral("galleon-deck.service")});
+        process.start(QStringLiteral("systemctl"), {QStringLiteral("--user"), QStringLiteral("restart"), QStringLiteral("kdeck-control.service")});
         ok = process.waitForFinished(8000) && process.exitCode() == 0;
         if (!ok)
             err = QString::fromUtf8(process.readAllStandardError()).trimmed();
     } else {
-        QFile pidFile(runtimePath(QStringLiteral("galleon-deck.pid")));
+        QFile pidFile(runtimePath(QStringLiteral("kdeck-control.pid")));
         if (pidFile.open(QIODevice::ReadOnly)) {
             bool parsed = false;
             const qint64 pid = QString::fromUtf8(pidFile.readAll()).trimmed().toLongLong(&parsed);
@@ -2232,9 +2232,9 @@ void Controller::restartBackend(bool replay)
                 ::kill(static_cast<pid_t>(pid), SIGTERM);
         }
         QThread::sleep(1);
-        const QString exe = QStandardPaths::findExecutable(QStringLiteral("galleon-deck"));
+        const QString exe = QStandardPaths::findExecutable(QStringLiteral("kdeck-control"));
         if (exe.isEmpty())
-            err = i18n("galleon-deck is not on PATH");
+            err = i18n("kdeck-control is not on PATH");
         else
             ok = QProcess::startDetached(exe);
     }
@@ -2254,10 +2254,10 @@ void Controller::openConfigFolder()
 void Controller::pollService()
 {
     QProcess process;
-    process.start(QStringLiteral("systemctl"), {QStringLiteral("--user"), QStringLiteral("is-active"), QStringLiteral("--quiet"), QStringLiteral("galleon-deck.service")});
+    process.start(QStringLiteral("systemctl"), {QStringLiteral("--user"), QStringLiteral("is-active"), QStringLiteral("--quiet"), QStringLiteral("kdeck-control.service")});
     bool running = process.waitForFinished(1500) && process.exitCode() == 0;
     if (!running) {
-        QFile pidFile(runtimePath(QStringLiteral("galleon-deck.pid")));
+        QFile pidFile(runtimePath(QStringLiteral("kdeck-control.pid")));
         if (pidFile.open(QIODevice::ReadOnly)) {
             bool parsed = false;
             const qint64 pid = QString::fromUtf8(pidFile.readAll()).trimmed().toLongLong(&parsed);
@@ -2280,7 +2280,7 @@ bool Controller::runPythonDeck(const QString &body, QString *output, int timeout
     QProcessEnvironment env = QProcessEnvironment::systemEnvironment();
     env.insert(QStringLiteral("PYTHONPATH"), QFileInfo(scriptPath).absolutePath());
     process.setProcessEnvironment(env);
-    const QString script = QStringLiteral("import galleon_deck as g\n"
+    const QString script = QStringLiteral("import kdeck_control as g\n"
                                           "cfg = {}\n"
                                           "try:\n"
                                           "    import tomllib\n"
@@ -2600,7 +2600,7 @@ void Controller::watchConfig()
 void Controller::followDeck()
 {
     const QByteArray runtime = qgetenv("XDG_RUNTIME_DIR");
-    const QString path = (runtime.isEmpty() ? QStringLiteral("/tmp") : QString::fromUtf8(runtime)) + QStringLiteral("/galleon-deck.state");
+    const QString path = (runtime.isEmpty() ? QStringLiteral("/tmp") : QString::fromUtf8(runtime)) + QStringLiteral("/kdeck-control.state");
     QFile file(path);
     if (!file.open(QIODevice::ReadOnly))
         return;
@@ -2666,23 +2666,23 @@ namespace {
 
 QString addonPython()
 {
-    const QString installed = QString::fromUtf8(GALLEAN_ADDON_SCRIPT);
+    const QString installed = QString::fromUtf8(KDECK_ADDON_SCRIPT);
     if (QFileInfo::exists(installed))
         return installed;
-#ifdef GALLEAN_ADDON_SRC
-    const QString source = QString::fromUtf8(GALLEAN_ADDON_SRC);
+#ifdef KDECK_ADDON_SRC
+    const QString source = QString::fromUtf8(KDECK_ADDON_SRC);
     if (QFileInfo::exists(source))
         return source;
 #endif
     return {};
 }
 
-bool runGalleonImport(const QString &body, const QStringList &args, QString *output, QString *errorText, int timeoutMs)
+bool runKdeckImport(const QString &body, const QStringList &args, QString *output, QString *errorText, int timeoutMs)
 {
     const QString scriptPath = addonPython();
     if (scriptPath.isEmpty()) {
         if (errorText)
-            *errorText = QStringLiteral("galleon_import.py was not found");
+            *errorText = QStringLiteral("kdeck_import.py was not found");
         return false;
     }
     QProcess process;
@@ -2714,7 +2714,7 @@ bool Controller::runAddonTool(const QStringList &args, QString *output, QString 
 {
     QString program;
     QStringList full = args;
-    const QString onPath = QStandardPaths::findExecutable(QStringLiteral("galleon-addon"));
+    const QString onPath = QStandardPaths::findExecutable(QStringLiteral("kdeck-addon"));
     if (!onPath.isEmpty()) {
         program = onPath;
     } else {
@@ -2722,7 +2722,7 @@ bool Controller::runAddonTool(const QStringList &args, QString *output, QString 
         const QString script = addonPython();
         if (program.isEmpty() || script.isEmpty()) {
             if (errorText)
-                *errorText = i18n("galleon-addon is not installed");
+                *errorText = i18n("kdeck-addon is not installed");
             return false;
         }
         full.prepend(script);
@@ -2732,7 +2732,7 @@ bool Controller::runAddonTool(const QStringList &args, QString *output, QString 
     if (!process.waitForFinished(20000)) {
         process.kill();
         if (errorText)
-            *errorText = i18n("galleon-addon timed out");
+            *errorText = i18n("kdeck-addon timed out");
         return false;
     }
     if (output)
@@ -2780,7 +2780,7 @@ void Controller::refreshAddons()
         addons.append(addon);
     }
     m_addons = addons;
-    m_addonStatus = addons.isEmpty() ? i18n("No add-ons yet. Install a .tar.gz or .zip from the galleon-deck-addons releases.") : QString();
+    m_addonStatus = addons.isEmpty() ? i18n("No add-ons yet. Packages from the previous program are not compatible yet.") : QString();
     Q_EMIT addonsChanged();
 }
 
@@ -3177,7 +3177,7 @@ QString Controller::createProfile(const QString &requested, const QString &sourc
         return fail(i18n("There is already a profile called “%1”", name));
     if (source.isEmpty()) {
         const QString text = QStringLiteral(
-            "# galleon-deck profile. Edit here or in the configurator (galleon-deck-config).\n"
+            "# kdeck-control profile. Edit here or in the configurator (kdeck-control-config).\n"
             "\n"
             "theme = \"amber\"\n"
             "\n"
@@ -3276,13 +3276,13 @@ QString Controller::peekStreamDeck(const QUrl &url)
     QString errorText;
     const QString body = QStringLiteral(
         "import sys\n"
-        "import galleon_import\n"
+        "import kdeck_import\n"
         "try:\n"
-        "    print(galleon_import.peek_name(sys.argv[1]))\n"
-        "except (galleon_import.ProfileImportError, OSError) as e:\n"
+        "    print(kdeck_import.peek_name(sys.argv[1]))\n"
+        "except (kdeck_import.ProfileImportError, OSError) as e:\n"
         "    print(e, file=sys.stderr)\n"
         "    raise SystemExit(1)\n");
-    if (!runGalleonImport(body, {path}, &output, &errorText, 30000)) {
+    if (!runKdeckImport(body, {path}, &output, &errorText, 30000)) {
         fail(errorText.isEmpty() ? i18n("Could not read that profile") : errorText);
         return {};
     }
@@ -3304,15 +3304,15 @@ QString Controller::importStreamDeck(const QUrl &url, const QString &requested)
     QString errorText;
     const QString body = QStringLiteral(
         "import sys\n"
-        "import galleon_import\n"
+        "import kdeck_import\n"
         "try:\n"
-        "    result = galleon_import.import_profile(sys.argv[1], sys.argv[2], name=(sys.argv[3] or None))\n"
-        "except (galleon_import.ProfileImportError, OSError) as e:\n"
+        "    result = kdeck_import.import_profile(sys.argv[1], sys.argv[2], name=(sys.argv[3] or None))\n"
+        "except (kdeck_import.ProfileImportError, OSError) as e:\n"
         "    print(e, file=sys.stderr)\n"
         "    raise SystemExit(1)\n"
         "print(result.name)\n"
         "print(result.kept)\n");
-    if (!runGalleonImport(body, {path, m_config.dir, requested}, &output, &errorText, 60000))
+    if (!runKdeckImport(body, {path, m_config.dir, requested}, &output, &errorText, 60000))
         return fail(errorText.isEmpty() ? i18n("Could not import that profile") : errorText);
     const QStringList lines = output.trimmed().split(QLatin1Char('\n'));
     if (lines.isEmpty() || lines.at(0).trimmed().isEmpty())
@@ -3454,4 +3454,4 @@ QImage KeyImageProvider::requestImage(const QString &id, QSize *size, const QSiz
     return image;
 }
 
-} // namespace galleon
+} // namespace kdeck

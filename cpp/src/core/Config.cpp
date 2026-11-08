@@ -16,7 +16,7 @@
 #include <QStandardPaths>
 #include <QStringList>
 
-namespace galleon {
+namespace kdeck {
 namespace {
 
 template <typename View>
@@ -398,16 +398,23 @@ Profile *Config::profile(const QString &name)
 QString Config::configDir()
 {
     const QString configHome = QStandardPaths::writableLocation(QStandardPaths::ConfigLocation);
-    return configHome + QStringLiteral("/galleon-deck");
+    const QString current = configHome + QStringLiteral("/kdeck-control");
+    if (QFileInfo::exists(current + QStringLiteral("/config.toml")))
+        return current;
+    // Profiles from the previous program name. Read them in place.
+    const QString previous = configHome + QStringLiteral("/galleon-deck");
+    if (QFileInfo::exists(previous + QStringLiteral("/config.toml")))
+        return previous;
+    return current;
 }
 
 namespace {
 
 QString examplesDir()
 {
-    QStringList candidates{QString::fromUtf8(GALLEAN_EXAMPLES_DIR)};
-#ifdef GALLEAN_EXAMPLES_SRC
-    candidates.append(QString::fromUtf8(GALLEAN_EXAMPLES_SRC));
+    QStringList candidates{QString::fromUtf8(KDECK_EXAMPLES_DIR)};
+#ifdef KDECK_EXAMPLES_SRC
+    candidates.append(QString::fromUtf8(KDECK_EXAMPLES_SRC));
 #endif
     for (const QString &candidate : candidates) {
         if (QFileInfo::exists(candidate + QStringLiteral("/config.toml")))
@@ -427,9 +434,9 @@ void ensureBuiltinProfiles()
     if (QFileInfo::exists(dest))
         return;
     QString source;
-    QStringList candidates{QString::fromUtf8(GALLEAN_EXAMPLES_DIR)};
-#ifdef GALLEAN_EXAMPLES_SRC
-    candidates.append(QString::fromUtf8(GALLEAN_EXAMPLES_SRC));
+    QStringList candidates{QString::fromUtf8(KDECK_EXAMPLES_DIR)};
+#ifdef KDECK_EXAMPLES_SRC
+    candidates.append(QString::fromUtf8(KDECK_EXAMPLES_SRC));
 #endif
     for (const QString &candidate : candidates) {
         const QString path = candidate + QStringLiteral("/profiles/system-stats.toml");
@@ -449,7 +456,7 @@ void ensureBuiltinProfiles()
 void retireSystemStatsAddon()
 {
     const QString state = QStandardPaths::writableLocation(QStandardPaths::StateLocation)
-        + QStringLiteral("/galleon-deck/addons/system-stats.json");
+        + QStringLiteral("/kdeck-control/addons/system-stats.json");
     QFile file(state);
     if (!file.open(QIODevice::ReadOnly))
         return;
@@ -1038,4 +1045,4 @@ bool replaceTableValue(const QString &path, const QString &table, const QString 
     return false;
 }
 
-} // namespace galleon
+} // namespace kdeck

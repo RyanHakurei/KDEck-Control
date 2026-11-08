@@ -1,0 +1,11 @@
+#!/bin/sh
+# Configurator for kdeck-control (GTK4 + libadwaita).
+here=$(dirname "$(readlink -f "$0")")
+# The distro Python has the packaged modules; a conda/pyenv/venv python3
+# earlier on PATH usually doesn't.
+py=/usr/bin/python3; [ -x "$py" ] || py=python3
+for src in "$here/../src" "$here/../share/kdeck-control" "${XDG_DATA_HOME:-$HOME/.local/share}/kdeck-control"; do
+    [ -f "$src/kdeck_control_config.py" ] && exec "$py" "$src/kdeck_control_config.py" "$@"
+done
+echo "kdeck-control-config: can't find kdeck_control_config.py" >&2
+exit 1

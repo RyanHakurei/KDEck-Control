@@ -7,9 +7,9 @@
 struct libevdev;
 struct libevdev_uinput;
 
-namespace galleon {
+namespace kdeck {
 
-// A uinput keyboard named "galleon-deck", used for key, shortcut, and media actions.
+// A uinput keyboard named "kdeck-control", used for key, shortcut, and media actions.
 class Keyboard {
 public:
     Keyboard();
@@ -42,4 +42,4 @@ private:
     bool m_numlockChecked = false;
 };
 
-} // namespace galleon
+} // namespace kdeck

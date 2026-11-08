@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Galleon Deck Configurator: a GTK4/libadwaita editor for galleon-deck.
+"""KDEck Control Configurator: a GTK4/libadwaita editor for kdeck-control.
 
-Edits the same files the service reads (~/.config/galleon-deck); every change is
+Edits the same files the service reads (~/.config/kdeck-control); every change is
 saved as you make it and the service picks it up within a second, so the real
 deck updates live. Previews are drawn with the service's own renderer.
 """
@@ -20,9 +20,9 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-import galleon_deck as gd  # noqa: E402
-import galleon_import  # noqa: E402
-import galleon_stats  # noqa: E402
+import kdeck_control as gd  # noqa: E402
+import kdeck_import  # noqa: E402
+import kdeck_stats  # noqa: E402
 
 import gi  # noqa: E402
 
@@ -30,7 +30,7 @@ gi.require_version("Gtk", "4.0")
 gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk  # noqa: E402
 
-APP_ID = "io.github.galleondeck.Config"
+APP_ID = "org.kde.kdeckcontrol"
 KEY_PREVIEW = 116
 LCD_PREVIEW = (540, 288)
 
@@ -84,11 +84,11 @@ def rgba_hex(c):
 
 def systemd_unit():
     return shutil.which("systemctl") and subprocess.run(
-        ["systemctl", "--user", "cat", "galleon-deck.service"], capture_output=True).returncode == 0
+        ["systemctl", "--user", "cat", "kdeck-control.service"], capture_output=True).returncode == 0
 
 
 def service_running():
-    if systemd_unit() and subprocess.run(["systemctl", "--user", "is-active", "--quiet", "galleon-deck.service"]).returncode == 0:
+    if systemd_unit() and subprocess.run(["systemctl", "--user", "is-active", "--quiet", "kdeck-control.service"]).returncode == 0:
         return True
     try:  # started some other way: XDG autostart, or by hand from a checkout
         with open(gd.PID_FILE) as f:
@@ -98,14 +98,14 @@ def service_running():
         return False
 
 
-ADDON_TOOL = [sys.executable, os.path.join(os.path.dirname(os.path.realpath(__file__)), "galleon_addon.py")]
-ADDONS_URL = "https://github.com/NLMP-DDHS/galleon-deck-addons/releases"
+ADDON_TOOL = [sys.executable, os.path.join(os.path.dirname(os.path.realpath(__file__)), "kdeck_addon.py")]
+
 
 
 def restart_service():
     """Restart through systemd when installed as a user unit, else by PID (XDG autostart installs)."""
     if systemd_unit():
-        r = subprocess.run(["systemctl", "--user", "restart", "galleon-deck.service"], capture_output=True, text=True)
+        r = subprocess.run(["systemctl", "--user", "restart", "kdeck-control.service"], capture_output=True, text=True)
         return r.returncode == 0, r.stderr.strip()
     try:
         with open(gd.PID_FILE) as f:
@@ -113,9 +113,9 @@ def restart_service():
         time.sleep(1)
     except (OSError, ValueError):
         pass
-    exe = shutil.which("galleon-deck")
+    exe = shutil.which("kdeck-control")
     if not exe:
-        return False, "galleon-deck is not on PATH"
+        return False, "kdeck-control is not on PATH"
     subprocess.Popen([exe], start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     return True, ""
 
@@ -212,7 +212,7 @@ class Model:
 
 class Window(Adw.ApplicationWindow):
     def __init__(self, app):
-        super().__init__(application=app, title="Galleon Deck", default_width=1200, default_height=800)
+        super().__init__(application=app, title="KDEck Control", default_width=1200, default_height=800)
         self.model = Model()
         self.profile = self.model.config.get("start_profile") if self.model.config.get("start_profile") in self.model.profiles else next(iter(self.model.profiles))
         self.page = 0
@@ -223,7 +223,7 @@ class Window(Adw.ApplicationWindow):
         self.picked_press = None  # the passthrough action under a system stat, same idea
         self.pending = {}  # debounce source ids
         self.icons = None
-        self.addons = None  # galleon-addon list --json, fetched when the Add-ons tab is built
+        self.addons = None  # kdeck-addon list --json, fetched when the Add-ons tab is built
         self.followed = gd.deck_state()  # open on whatever the deck is showing
         self._anim_timer = None  # preview timer for animated key images
         self._anim_preview = {}  # key index -> (image, file token, frame) already shown
@@ -681,8 +681,8 @@ class Window(Adw.ApplicationWindow):
             self.add_action_fields(action, spec, k)
 
     def add_stat_reading(self, group, spec):
-        ids = [stat for stat, _title, _label in galleon_stats.STATS]
-        titles = [title for _stat, title, _label in galleon_stats.STATS]
+        ids = [stat for stat, _title, _label in kdeck_stats.STATS]
+        titles = [title for _stat, title, _label in kdeck_stats.STATS]
         current_stat = spec.get("stat")
         if current_stat not in ids:
             ids.append(current_stat)
@@ -862,11 +862,11 @@ class Window(Adw.ApplicationWindow):
         spec = self.spec()
         if spec is None or spec.get("stat") == stat:
             return
-        previous = galleon_stats.label_for(spec.get("stat"))
+        previous = kdeck_stats.label_for(spec.get("stat"))
         self.set_field("stat", stat)
         spec = self.spec()
         if spec is not None and str(spec.get("label", "")) in ("", previous):
-            self.set_field("label", galleon_stats.label_for(stat))
+            self.set_field("label", kdeck_stats.label_for(stat))
         self.build_key_page()
 
     def _own_spec(self):
@@ -926,7 +926,7 @@ class Window(Adw.ApplicationWindow):
             if not spec.get("stat"):
                 spec["stat"] = "cpu"
                 if not spec.get("label"):
-                    spec["label"] = galleon_stats.label_for("cpu")
+                    spec["label"] = kdeck_stats.label_for("cpu")
         else:
             self._keep_action(spec, kind)
             if kind == "folder" and not isinstance(spec.get("folder"), list):
@@ -1455,14 +1455,14 @@ class Window(Adw.ApplicationWindow):
     def import_streamdeck_profile(self):
         def picked(path):
             try:
-                suggested = galleon_import.peek_name(path)
-            except (galleon_import.ProfileImportError, OSError) as e:
+                suggested = kdeck_import.peek_name(path)
+            except (kdeck_import.ProfileImportError, OSError) as e:
                 return self.toast(str(e))
 
             def named(name):
                 try:
-                    result = galleon_import.import_profile(path, gd.CONFIG_DIR, name=name)
-                except (galleon_import.ProfileImportError, OSError) as e:
+                    result = kdeck_import.import_profile(path, gd.CONFIG_DIR, name=name)
+                except (kdeck_import.ProfileImportError, OSError) as e:
                     return self.toast(str(e))
                 self.model.load()
                 self.profile, self.page, self.key = result.name, 0, 0
@@ -1659,17 +1659,12 @@ class Window(Adw.ApplicationWindow):
     def build_addons_page(self, fetch=False):
         page = self.addons_page
         self.clear_page(page)
-        g = Adw.PreferencesGroup(title="Add-ons", description="Optional extras, each a separate download: a profile "
-                                 "for a game with its own themes, keys and auto-switch rule.")
+        g = Adw.PreferencesGroup(title="Add-ons", description="Packages from the previous program are not compatible yet.")
         self.add_group(page, g)
         row = Adw.ActionRow(title="Install an add-on", subtitle="A package (.tar.gz) you downloaded")
         install = Gtk.Button(label="Install from file…", valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
         install.connect("clicked", lambda b: self.install_addon_file(b))
         row.add_suffix(install)
-        g.add(row)
-        row = Adw.ActionRow(title="Get add-ons", subtitle="The download page, in your browser", activatable=True)
-        row.add_suffix(Gtk.Image(icon_name="adw-external-link-symbolic"))
-        row.connect("activated", lambda _r: Gio.AppInfo.launch_default_for_uri(ADDONS_URL, None))
         g.add(row)
 
         mine = Adw.PreferencesGroup(title="Your add-ons")
@@ -1681,7 +1676,7 @@ class Window(Adw.ApplicationWindow):
         dev = Adw.PreferencesGroup(title="Making add-ons")
         folder = self.model.config.get("addons", {}).get("dir")
         row = Adw.ActionRow(title="Add-on folder", use_markup=False,
-                            subtitle=folder or "Also list the add-ons in a folder of sources, e.g. a galleon-deck-addons checkout")
+                            subtitle=folder or "Also list the add-ons in a folder of sources, e.g. a kdeck-control-addons checkout")
         pick = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER, css_classes=["flat"], tooltip_text="Choose folder")
         pick.connect("clicked", lambda _b: self.choose_addons_folder())
         row.add_suffix(pick)
@@ -1695,7 +1690,7 @@ class Window(Adw.ApplicationWindow):
         if fetch or self.addons is None:
             try:
                 r = subprocess.run(ADDON_TOOL + ["list", "--json"], capture_output=True, text=True, timeout=30)
-                self.addons = json.loads(r.stdout) if r.returncode == 0 else (r.stderr.strip() or "galleon-addon failed")
+                self.addons = json.loads(r.stdout) if r.returncode == 0 else (r.stderr.strip() or "kdeck-addon failed")
             except (OSError, ValueError, subprocess.TimeoutExpired) as e:
                 self.addons = str(e)
         if isinstance(self.addons, str):
@@ -1714,7 +1709,7 @@ class Window(Adw.ApplicationWindow):
                 status = f"Version {a['version']} · not installed"
             row = Adw.ExpanderRow(title=a["title"], subtitle=status, use_markup=False)
             if not a["compatible"]:
-                row.set_subtitle(f"Needs galleon-deck {a['requires']} (this is {gd.VERSION})")
+                row.set_subtitle(f"Needs kdeck-control {a['requires']} (this is {gd.VERSION})")
             elif not a["installed"] or a["upgrade"]:
                 b = Gtk.Button(label="Upgrade" if a["upgrade"] else "Install", valign=Gtk.Align.CENTER, css_classes=["suggested-action"])
                 b.connect("clicked", lambda btn, a=a: self.install_addon(btn, a))
@@ -1732,7 +1727,7 @@ class Window(Adw.ApplicationWindow):
                     show.connect("activated", lambda _r, p=profile: self.show_profile(p))
                     row.add_row(show)
             for cmd in a["commands"]:
-                c = Adw.ActionRow(title=cmd.replace("-", " ").capitalize(), subtitle=f"galleon-addon run {a['name']} {cmd}", use_markup=False)
+                c = Adw.ActionRow(title=cmd.replace("-", " ").capitalize(), subtitle=f"kdeck-addon run {a['name']} {cmd}", use_markup=False)
                 run = Gtk.Button(label="Run", valign=Gtk.Align.CENTER)
                 run.connect("clicked", lambda btn, a=a, cmd=cmd: self.run_addon(
                     btn, ["run", a["name"], cmd], None, show_output=cmd.replace("-", " ").capitalize()))
@@ -1797,11 +1792,11 @@ class Window(Adw.ApplicationWindow):
 
     def remove_addon(self, button, a):
         self.confirm(f"Remove {a['title']}?", "Its profile and themes are removed from the deck. The profile, with "
-                     "your changes, is backed up to ~/.local/state/galleon-deck/addons/backups first.", "Remove",
+                     "your changes, is backed up to ~/.local/state/kdeck-control/addons/backups first.", "Remove",
                      lambda: self.run_addon(button, ["remove", a["name"]], f"Removed {a['title']}"))
 
     def run_addon(self, button, args, done_text, after=None, show_output=None):
-        """Run galleon-addon in the background, then reload and report."""
+        """Run kdeck-addon in the background, then reload and report."""
         self.flush()
         button.set_sensitive(False)
 
@@ -1844,7 +1839,7 @@ class Window(Adw.ApplicationWindow):
     def update_status(self):
         active = service_running()
         self.status.set_label("● deck running" if active else "○ service stopped")
-        self.status.set_tooltip_text("The galleon-deck service is " + ("running" if active else "not running"))
+        self.status.set_tooltip_text("The kdeck-control service is " + ("running" if active else "not running"))
 
     def replay_boot(self):
         self.flush()
@@ -1860,8 +1855,8 @@ class Window(Adw.ApplicationWindow):
         Gio.AppInfo.launch_default_for_uri(GLib.filename_to_uri(gd.CONFIG_DIR), None)
 
     def about(self):
-        about = Adw.AboutDialog(application_name="Galleon Deck", application_icon="input-keyboard",
-                                developer_name="galleon-deck contributors", version=gd.VERSION,
+        about = Adw.AboutDialog(application_name="KDEck Control", application_icon="input-keyboard",
+                                developer_name="KDEck Control", version=gd.VERSION,
                                 comments="Stream Deck support for the Corsair Galleon 100 SD keyboard on Linux.",
                                 license_type=Gtk.License.MIT_X11)
         about.present(self)

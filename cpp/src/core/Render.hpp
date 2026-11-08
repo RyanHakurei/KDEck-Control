@@ -8,7 +8,7 @@
 #include <QImage>
 #include <QStringList>
 
-namespace galleon {
+namespace kdeck {
 
 // Deck text uses the fonts chosen in KDE System Settings. `spec` may end in
 // :bold, :semibold, or :light. Any family name in `spec` is ignored.
@@ -37,4 +37,4 @@ QImage renderDeckKey(const KeySpec &spec, const Theme &pageTheme, const QHash<QS
                      const QString &activeTheme, bool pressed, double when);
 QList<KeySpec> settingsKeys(const Config &config, const QString &activeProfile);
 
-} // namespace galleon
+} // namespace kdeck

@@ -11,7 +11,7 @@
 #include <algorithm>
 #include <cmath>
 
-namespace galleon {
+namespace kdeck {
 namespace {
 
 constexpr double BootFps = 30.0;
@@ -660,4 +660,4 @@ bool BootSequence::next(PlayFrame &frame)
     return true;
 }
 
-} // namespace galleon
+} // namespace kdeck

@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Add or remove galleon-deck add-ons: ready-made profiles, themes and tools.
+"""Add or remove kdeck-control add-ons: ready-made profiles, themes and tools.
 
-  galleon-addon list [--json]                    what's available and what's installed
-  galleon-addon install FILE|FOLDER|NAME [--force]
+  kdeck-addon list [--json]                    what's available and what's installed
+  kdeck-addon install FILE|FOLDER|NAME [--force]
                                                  install or upgrade an add-on from a downloaded
                                                  package (.tar.gz or .zip), an add-on folder,
                                                  or by name if it's already been unpacked
-  galleon-addon remove NAME                      remove it again, and anything pointing at it
-  galleon-addon run NAME COMMAND [ARGS]          run one of the add-on's commands
-  galleon-addon pack FOLDER [-o DIR]             build a package from an add-on folder
+  kdeck-addon remove NAME                      remove it again, and anything pointing at it
+  kdeck-addon run NAME COMMAND [ARGS]          run one of the add-on's commands
+  kdeck-addon pack FOLDER [-o DIR]             build a package from an add-on folder
 
 Add-ons are separate downloads: nothing is installed unless you install it.
-Packages are unpacked to ~/.local/share/galleon-deck-addons/NAME.
+Packages are unpacked to ~/.local/share/kdeck-control-addons/NAME.
 
 An add-on is a folder named after it, holding addon.toml plus any of:
-  profiles/*.toml   copied to ~/.config/galleon-deck/profiles/
-  themes/*.toml     copied to ~/.config/galleon-deck/themes/
-  images/...        copied to ~/.config/galleon-deck/addons/NAME/images/ (refer to
+  profiles/*.toml   copied to ~/.config/kdeck-control/profiles/
+  themes/*.toml     copied to ~/.config/kdeck-control/themes/
+  images/...        copied to ~/.config/kdeck-control/addons/NAME/images/ (refer to
                     them from keys as image = "addons/NAME/images/x.png")
 The running service picks the files up within a second; nothing needs restarting.
 """
@@ -39,12 +39,12 @@ except ModuleNotFoundError:  # Python 3.10
     import tomli as tomllib
 
 sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
-import galleon_deck as gd  # noqa: E402
+import kdeck_control as gd  # noqa: E402
 
 DATA = os.environ.get("XDG_DATA_HOME") or os.path.expanduser("~/.local/share")
-STORE = os.path.join(DATA, "galleon-deck-addons")  # unpacked packages
+STORE = os.path.join(DATA, "kdeck-control-addons")  # unpacked packages
 STATE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"),
-                         "galleon-deck", "addons")
+                         "kdeck-control", "addons")
 FOLDERS = ("themes", "profiles", "images")  # install order: themes before the profiles using them
 NAME_RE = re.compile(r"[a-z0-9][a-z0-9_-]*")
 PACKAGE_EXTS = (".tar.gz", ".tgz", ".zip")
@@ -65,7 +65,7 @@ def read_manifest(folder):
 
 def source_dirs():
     """Folders that hold add-ons: unpacked packages, plus a development checkout
-    chosen in the app or config.toml ([addons] dir = "~/src/galleon-deck-addons")."""
+    chosen in the app or config.toml ([addons] dir = "~/src/kdeck-control-addons")."""
     dirs = [STORE]
     try:
         with open(gd.CONFIG_PATH, "rb") as f:
@@ -184,7 +184,7 @@ def unpack(path):
                 t.extractall(tmp, filter="data") if hasattr(tarfile, "data_filter") else t.extractall(tmp)
         tops = [d for d in os.listdir(tmp) if os.path.isdir(os.path.join(tmp, d))]
         if len(tops) != 1 or not os.path.isfile(os.path.join(tmp, tops[0], "addon.toml")):
-            raise AddonError(f"{os.path.basename(path)} isn't a galleon-deck add-on "
+            raise AddonError(f"{os.path.basename(path)} isn't a kdeck-control add-on "
                              "(expected one folder holding addon.toml)")
         name = tops[0]
         if not NAME_RE.fullmatch(name):
@@ -240,12 +240,12 @@ def listing():
 
 def cmd_list(as_json=False):
     addons = listing()
-    if as_json:  # for the Galleon Deck app's Add-ons tab
+    if as_json:  # for the KDEck Control app's Add-ons tab
         print(json.dumps(addons))
         return
     if not addons:
-        print("No add-ons yet. Download one (a .tar.gz from the galleon-deck-addons releases)\n"
-              "and install it with: galleon-addon install FILE")
+        print("No add-ons yet. Packages from the previous program are not compatible yet.\n"
+              "Install a new package with: kdeck-addon install FILE")
     for a in addons:
         if not a["installed"]:
             status = "not installed"
@@ -255,7 +255,7 @@ def cmd_list(as_json=False):
             status = f"installed {a['installed']}"
         print(f"{a['name']}  {a['version']}  [{status}]")
         print(f"    {a['title']}: {a['description']}")
-    print(f"\ngalleon-deck {gd.VERSION}, config in {gd.CONFIG_DIR}")
+    print(f"\nkdeck-control {gd.VERSION}, config in {gd.CONFIG_DIR}")
 
 
 def cmd_install(what, force=False):
@@ -268,8 +268,8 @@ def cmd_install(what, force=False):
     else:
         name, meta = what, addon(what)
     if version(gd.VERSION) < version(meta.get("requires", "0")):
-        raise AddonError(f"{name} needs galleon-deck {meta['requires']} or newer (this is {gd.VERSION}). "
-                         "Update galleon-deck first.")
+        raise AddonError(f"{name} needs kdeck-control {meta['requires']} or newer (this is {gd.VERSION}). "
+                         "Update kdeck-control first.")
     state = installed(name) or {"files": []}
     plan = targets(name, meta)
     if not plan:
@@ -325,7 +325,7 @@ def cmd_install(what, force=False):
         print(f"Previous files backed up in {saved}")
     for hook in meta.get("hooks", {}).get("post_install", []):
         if run_command(name, meta, hook) != 0:
-            print(f"galleon-addon: post-install step {hook!r} failed; the add-on is installed anyway", file=sys.stderr)
+            print(f"kdeck-addon: post-install step {hook!r} failed; the add-on is installed anyway", file=sys.stderr)
 
 
 def cmd_remove(name):
@@ -397,10 +397,10 @@ def main():
             out_dir = rest[rest.index("-o") + 1] if "-o" in rest[1:-1] else "."
             print(pack(rest[0], out_dir))
         else:
-            sys.exit("usage: galleon-addon list | install FILE|FOLDER|NAME [--force] | remove NAME"
+            sys.exit("usage: kdeck-addon list | install FILE|FOLDER|NAME [--force] | remove NAME"
                      " | run NAME COMMAND [ARGS] | pack FOLDER [-o DIR]")
     except (AddonError, OSError, tarfile.TarError, zipfile.BadZipFile, tomllib.TOMLDecodeError) as e:
-        sys.exit(f"galleon-addon: {e}")
+        sys.exit(f"kdeck-addon: {e}")
 
 
 if __name__ == "__main__":

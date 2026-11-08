@@ -1,5 +1,5 @@
-# galleon-deck: the Galleon 100 SD's Stream Deck. Edit with the "Galleon Deck"
-# app (galleon-deck-config) or by hand; saved changes apply within a second and
+# kdeck-control: the Galleon 100 SD's Stream Deck. Edit with the "KDEck Control"
+# app (kdeck-control-config) or by hand; saved changes apply within a second and
 # mistakes show on the deck's screen instead of crashing it.
 #
 #   config.toml          this file: global settings and auto-switching
@@ -106,7 +106,7 @@ lines = [                          # "LABEL|STATUS", up to 6
 # gif = "~/Videos/intro.gif"       # play your own GIF/APNG/WebP instead
 
 # Theme from your wallpaper (the settings page's wallpaper key, or
-# galleon-deck --theme-from-wallpaper). The wallpaper is found through
+# kdeck-control --theme-from-wallpaper). The wallpaper is found through
 # noctalia, swww, hyprpaper or GNOME; set `command` for anything else.
 [wallpaper_theme]
 auto = false                       # true: regenerate whenever the wallpaper changes

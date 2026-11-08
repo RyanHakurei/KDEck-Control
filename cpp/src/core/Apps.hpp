@@ -4,7 +4,7 @@
 #include <QStringList>
 #include <QList>
 
-namespace galleon {
+namespace kdeck {
 
 // One installed .desktop application. `id` is the file name without ".desktop".
 // `icon` is a theme name, or an absolute path when the desktop file gives one.
@@ -26,4 +26,4 @@ QString applicationName(const QString &app);
 // found. This does not go through a shell.
 QStringList applicationArgv(const QString &app, const QString &args);
 
-} // namespace galleon
+} // namespace kdeck

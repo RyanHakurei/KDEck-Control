@@ -5,8 +5,8 @@ here=$(dirname "$(readlink -f "$0")")
 # The distro Python has the packaged modules; a conda/pyenv/venv python3
 # earlier on PATH usually doesn't.
 py=/usr/bin/python3; [ -x "$py" ] || py=python3
-for src in "$here/../src" "$here/../share/galleon-deck" "${XDG_DATA_HOME:-$HOME/.local/share}/galleon-deck"; do
-    [ -f "$src/galleon_deck.py" ] && exec "$py" "$src/galleon_deck.py" "$@"
+for src in "$here/../src" "$here/../share/kdeck-control" "${XDG_DATA_HOME:-$HOME/.local/share}/kdeck-control"; do
+    [ -f "$src/kdeck_control.py" ] && exec "$py" "$src/kdeck_control.py" "$@"
 done
-echo "galleon-deck: can't find galleon_deck.py" >&2
+echo "kdeck-control: can't find kdeck_control.py" >&2
 exit 1

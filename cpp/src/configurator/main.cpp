@@ -20,12 +20,12 @@ int main(int argc, char *argv[])
         qputenv("QT_QPA_PLATFORMTHEME", QByteArrayLiteral("kde"));
     KIconTheme::initTheme();
     QApplication app(argc, argv);
-    QApplication::setApplicationName(QStringLiteral("galleon-deck"));
-    QApplication::setOrganizationName(QStringLiteral("galleon-deck"));
-    QApplication::setDesktopFileName(QStringLiteral("org.kde.galleondeck"));
-    KLocalizedString::setApplicationDomain("galleon-deck");
+    QApplication::setApplicationName(QStringLiteral("kdeck-control"));
+    QApplication::setOrganizationName(QStringLiteral("kdeck-control"));
+    QApplication::setDesktopFileName(QStringLiteral("org.kde.kdeckcontrol"));
+    KLocalizedString::setApplicationDomain("kdeck-control");
 
-    KAboutData about(QStringLiteral("galleon-deck"), i18n("Galleon Deck"), QStringLiteral("1.3.0"),
+    KAboutData about(QStringLiteral("kdeck-control"), i18n("KDEck Control"), QStringLiteral("1.3.0"),
                      i18n("Stream Deck support for the Corsair Galleon 100 SD"), KAboutLicense::MIT);
     KAboutData::setApplicationData(about);
 
@@ -38,15 +38,15 @@ int main(int argc, char *argv[])
 
     QQuickStyle::setStyle(QStringLiteral("org.kde.desktop"));
 
-    galleon::Controller controller;
+    kdeck::Controller controller;
     QQmlApplicationEngine engine;
     KLocalization::setupLocalizedContext(&engine);
     engine.rootContext()->setContextProperty(QStringLiteral("controller"), &controller);
-    engine.addImageProvider(QStringLiteral("keys"), new galleon::KeyImageProvider(&controller));
+    engine.addImageProvider(QStringLiteral("keys"), new kdeck::KeyImageProvider(&controller));
 
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed, &app, [] { QCoreApplication::exit(1); },
                      Qt::QueuedConnection);
-    engine.loadFromModule("org.kde.galleondeck", "Main");
+    engine.loadFromModule("org.kde.kdeckcontrol", "Main");
     if (engine.rootObjects().isEmpty())
         return 1;
     if (parser.isSet(checkOption))

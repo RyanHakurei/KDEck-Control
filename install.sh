@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Install galleon-deck for the current user.
+# Install kdeck-control for the current user.
 #
 #   ./install.sh            install (copies files; asks for sudo once, for the udev rule)
 #   ./install.sh --dev      run from this checkout instead of copying (for development)
@@ -134,37 +134,39 @@ except (ImportError, ValueError):
 EOF
 
 # ------------------------------------------------------------------ files
-say "Installing galleon-deck$([ "$DEV" = 1 ] && echo " (dev: running from $REPO)")"
+say "Installing kdeck-control$([ "$DEV" = 1 ] && echo " (dev: running from $REPO)")"
 mkdir -p "$BIN" "$DATA/applications"
 if [ "$DEV" = 1 ]; then
-    ln -sfn "$REPO/bin/galleon-deck" "$BIN/galleon-deck"
-    ln -sfn "$REPO/bin/galleon-deck-config" "$BIN/galleon-deck-config"
-    ln -sfn "$REPO/bin/galleon-addon" "$BIN/galleon-addon"
+    ln -sfn "$REPO/bin/kdeck-control" "$BIN/kdeck-control"
+    ln -sfn "$REPO/bin/kdeck-control-config" "$BIN/kdeck-control-config"
+    ln -sfn "$REPO/bin/kdeck-addon" "$BIN/kdeck-addon"
 else
-    mkdir -p "$DATA/galleon-deck"
-    install -m644 "$REPO"/src/*.py "$DATA/galleon-deck/"
-    rm -f "$BIN/galleon-deck" "$BIN/galleon-deck-config" "$BIN/galleon-addon"
-    install -m755 "$REPO/bin/galleon-deck" "$REPO/bin/galleon-deck-config" "$REPO/bin/galleon-addon" "$BIN/"
+    mkdir -p "$DATA/kdeck-control"
+    install -m644 "$REPO"/src/*.py "$DATA/kdeck-control/"
+    rm -f "$BIN/kdeck-control" "$BIN/kdeck-control-config" "$BIN/kdeck-addon"
+    install -m755 "$REPO/bin/kdeck-control" "$REPO/bin/kdeck-control-config" "$REPO/bin/kdeck-addon" "$BIN/"
 fi
 # absolute Exec: many sessions (uwsm, greetd) start without ~/.local/bin on PATH,
 # and launchers hide entries whose Exec they cannot resolve
-sed "s|^Exec=galleon-deck-config|Exec=$BIN/galleon-deck-config|" \
-    "$REPO/data/applications/io.github.galleondeck.Config.desktop" > "$DATA/applications/io.github.galleondeck.Config.desktop"
+sed "s|^Exec=kdeck-control-config|Exec=$BIN/kdeck-control-config|" \
+    "$REPO/data/applications/org.kde.kdeckcontrol.desktop" > "$DATA/applications/org.kde.kdeckcontrol.desktop"
 command -v update-desktop-database >/dev/null && update-desktop-database "$DATA/applications" 2>/dev/null || true
 
-if [ ! -e "$CONF/galleon-deck/config.toml" ]; then
-    say "Creating a starter config in $CONF/galleon-deck"
-    mkdir -p "$CONF/galleon-deck"
-    cp -r "$REPO/examples/." "$CONF/galleon-deck/"
-else
+if [ -e "$CONF/kdeck-control/config.toml" ]; then
+    say "Keeping your existing config in $CONF/kdeck-control"
+elif [ -e "$CONF/galleon-deck/config.toml" ]; then
     say "Keeping your existing config in $CONF/galleon-deck"
+else
+    say "Creating a starter config in $CONF/kdeck-control"
+    mkdir -p "$CONF/kdeck-control"
+    cp -r "$REPO/examples/." "$CONF/kdeck-control/"
 fi
 
 # ------------------------------------------------------------------- root
 say "Device access (udev rule + uinput module) needs root once:"
-as_root install -m644 "$REPO/data/udev/71-galleon-deck.rules" /etc/udev/rules.d/71-galleon-deck.rules
-as_root rm -f /etc/udev/rules.d/71-galleon-deck-hidraw.rules   # older name of the same rule
-as_root sh -c 'echo uinput > /etc/modules-load.d/galleon-deck.conf; modprobe uinput'
+as_root install -m644 "$REPO/data/udev/71-kdeck-control.rules" /etc/udev/rules.d/71-kdeck-control.rules
+as_root rm -f /etc/udev/rules.d/71-galleon-deck.rules /etc/udev/rules.d/71-galleon-deck-hidraw.rules
+as_root sh -c 'echo uinput > /etc/modules-load.d/kdeck-control.conf; modprobe uinput'
 as_root udevadm control --reload
 as_root udevadm trigger --subsystem-match=hidraw --subsystem-match=misc
 
@@ -172,18 +174,20 @@ as_root udevadm trigger --subsystem-match=hidraw --subsystem-match=misc
 if systemctl --user show-environment >/dev/null 2>&1; then
     say "Starting the systemd user service"
     mkdir -p "$CONF/systemd/user"
-    install -m644 "$REPO/data/systemd/galleon-deck.service" "$CONF/systemd/user/"
-    rm -f "$CONF/autostart/galleon-deck-autostart.desktop"
+    install -m644 "$REPO/data/systemd/kdeck-control.service" "$CONF/systemd/user/"
+    rm -f "$CONF/autostart/kdeck-control-autostart.desktop" "$CONF/autostart/galleon-deck-autostart.desktop"
+    systemctl --user disable --now galleon-deck.service >/dev/null 2>&1 || true
+    rm -f "$CONF/systemd/user/galleon-deck.service"
     systemctl --user daemon-reload
-    systemctl --user enable galleon-deck.service
-    systemctl --user restart galleon-deck.service
+    systemctl --user enable kdeck-control.service
+    systemctl --user restart kdeck-control.service
 else
     say "No systemd user session: starting through XDG autostart"
     mkdir -p "$CONF/autostart"
-    install -m644 "$REPO/data/applications/galleon-deck-autostart.desktop" "$CONF/autostart/"
-    [ -f "${XDG_RUNTIME_DIR:-/tmp}/galleon-deck.pid" ] && kill "$(cat "${XDG_RUNTIME_DIR:-/tmp}/galleon-deck.pid")" 2>/dev/null || true
-    nohup "$BIN/galleon-deck" >/dev/null 2>&1 &
+    install -m644 "$REPO/data/applications/kdeck-control-autostart.desktop" "$CONF/autostart/"
+    [ -f "${XDG_RUNTIME_DIR:-/tmp}/kdeck-control.pid" ] && kill "$(cat "${XDG_RUNTIME_DIR:-/tmp}/kdeck-control.pid")" 2>/dev/null || true
+    nohup "$BIN/kdeck-control" >/dev/null 2>&1 &
 fi
 
-case ":$PATH:" in *":$BIN:"*) ;; *) warn "$BIN isn't on your PATH; add it so 'galleon-deck-config' runs from a terminal." ;; esac
-say "Done. Open \"Galleon Deck\" from your app menu (or run galleon-deck-config) to customize the deck."
+case ":$PATH:" in *":$BIN:"*) ;; *) warn "$BIN isn't on your PATH; add it so 'kdeck-control-config' runs from a terminal." ;; esac
+say "Done. Open \"KDEck Control\" from your app menu (or run kdeck-control-config) to customize the deck."

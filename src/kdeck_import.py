@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn an official Elgato .streamDeckProfile into a Galleon Deck profile.
+"""Turn an official Elgato .streamDeckProfile into a KDEck Control profile.
 
 A .streamDeckProfile is a zip: a root manifest.json plus one folder per page
 under Profiles/. Each page lists keys as "column,row". This keeps titles,
@@ -17,7 +17,7 @@ beside the profile) is the panel.
   hotkey multi      sequence
 
 A plugin action (OBS, Discord, and the rest) keeps its title and picture.
-Galleon Deck has no plugin host, so that key does nothing until it is assigned.
+KDEck Control has no plugin host, so that key does nothing until it is assigned.
 Dials stay the deck's own dials. A 3-column deck keeps its key positions. Any
 other shape is poured into 3-by-4 pages in reading order.
 """
@@ -86,7 +86,18 @@ MEDIA = {
 }
 VOLUME = {"mute": "MUTE", "volumeup": "VOLUMEUP", "volumedown": "VOLUMEDOWN", "up": "VOLUMEUP", "down": "VOLUMEDOWN"}
 
-CONFIG_DIR = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"), "galleon-deck")
+def resolve_config_dir():
+    base = os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config")
+    current = os.path.join(base, "kdeck-control")
+    if os.path.isfile(os.path.join(current, "config.toml")):
+        return current
+    previous = os.path.join(base, "galleon-deck")
+    if os.path.isfile(os.path.join(previous, "config.toml")):
+        return previous
+    return current
+
+
+CONFIG_DIR = resolve_config_dir()
 
 
 class ProfileImportError(Exception):
@@ -158,7 +169,7 @@ def _toml_value(value):
 
 
 def render_profile(profile, header):
-    """The same shape write_profile() in galleon_deck writes."""
+    """The same shape write_profile() in kdeck_control writes."""
     lines = [ln.rstrip("\n") for ln in header]
     while lines and not lines[-1].strip():
         lines.pop()
@@ -983,12 +994,12 @@ def peek_name(source):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        prog="galleon-deck import",
-        description="Convert an official Stream Deck profile (.streamDeckProfile) into a Galleon Deck profile.",
+        prog="kdeck-control import",
+        description="Convert an official Stream Deck profile (.streamDeckProfile) into a KDEck Control profile.",
     )
     parser.add_argument("file", help="exported .streamDeckProfile (a zip) or an unpacked folder")
     parser.add_argument("--name", help="profile name (default: the name inside the file)")
-    parser.add_argument("--config", default=CONFIG_DIR, help="config directory (default: ~/.config/galleon-deck)")
+    parser.add_argument("--config", default=CONFIG_DIR, help="config directory (default: ~/.config/kdeck-control)")
     parser.add_argument("--force", action="store_true", help="replace an existing profile of the same name")
     parser.add_argument("--dry-run", action="store_true", help="report what would be written")
     args = parser.parse_args(argv)
@@ -1001,10 +1012,10 @@ def main(argv=None):
             return 0
         result = import_profile(args.file, config_dir=args.config, name=args.name, force=args.force)
     except ProfileImportError as e:
-        print(f"galleon-deck import: {e}", file=sys.stderr)
+        print(f"kdeck-control import: {e}", file=sys.stderr)
         return 1
     except OSError as e:
-        print(f"galleon-deck import: {e}", file=sys.stderr)
+        print(f"kdeck-control import: {e}", file=sys.stderr)
         return 1
     print(f"Imported {result.name} -> {result.path}")
     print(f"{result.pages} pages, {result.actions} actions, {result.kept} plugin keys kept their title and picture")

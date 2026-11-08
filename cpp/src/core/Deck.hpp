@@ -3,7 +3,7 @@
 #include <QByteArray>
 #include <QString>
 
-namespace galleon {
+namespace kdeck {
 
 // The deck's hidraw node. Reports are 1024 bytes. Feature reports are 32.
 class Deck {
@@ -34,4 +34,4 @@ private:
     int m_fd = -1;
 };
 
-} // namespace galleon
+} // namespace kdeck

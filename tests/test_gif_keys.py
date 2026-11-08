@@ -6,7 +6,7 @@ import tempfile
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-import galleon_deck as gd  # noqa: E402
+import kdeck_control as gd  # noqa: E402
 
 from PIL import Image, ImageDraw  # noqa: E402
 

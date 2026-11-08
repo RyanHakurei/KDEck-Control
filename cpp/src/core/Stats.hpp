@@ -2,7 +2,7 @@
 
 #include <QString>
 
-namespace galleon {
+namespace kdeck {
 
 // One live reading for a stat key. bar < 0 means the key has no gauge.
 struct StatReading {
@@ -13,4 +13,4 @@ struct StatReading {
 
 StatReading statReading(const QString &id);
 
-} // namespace galleon
+} // namespace kdeck

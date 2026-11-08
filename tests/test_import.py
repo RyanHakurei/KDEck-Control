@@ -8,7 +8,7 @@ import tempfile
 import zipfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-import galleon_import as gi  # noqa: E402
+import kdeck_import as gi  # noqa: E402
 
 try:
     import tomllib

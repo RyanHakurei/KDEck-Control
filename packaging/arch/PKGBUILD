@@ -1,11 +1,11 @@
-# Maintainer: JustMrJ <ddhs-nlmp@proton.me>
-pkgname=galleon-deck-git
-_pkgname=galleon-deck
+# Maintainer: Ryan <ryan@freyja.pw>
+pkgname=kdeck-control-git
+_pkgname=kdeck-control
 pkgver=1.1.0.r6.g5fa4674
 pkgrel=1
 pkgdesc="Stream Deck support for the Corsair Galleon 100 SD keyboard: LCD keys, top screen, dials, per-game profiles"
 arch=('any')
-url="https://github.com/NLMP-DDHS/galleon-deck"
+url="https://github.com/RyanHakurei/KDEck-Control"
 license=('MIT')
 depends=('python' 'python-pillow' 'python-evdev' 'python-gobject' 'gtk4' 'libadwaita'
          'ttf-nerd-fonts-symbols' 'ttf-jetbrains-mono')
@@ -16,29 +16,31 @@ optdepends=('python-fonttools: icon search in the configurator'
             'wireplumber: volume dial (PipeWire)'
             'libpulse: volume dial (PulseAudio)')
 provides=("$_pkgname")
-conflicts=("$_pkgname")
-install=galleon-deck.install
-source=("git+$url.git")
+conflicts=("$_pkgname" 'kdeck-control-local'
+           'galleon-deck' 'galleon-deck-git' 'galleon-deck-local' 'galleon-deck-qt')
+replaces=('galleon-deck-git')
+install=kdeck-control.install
+source=("KDEck-Control::git+$url.git")
 sha256sums=('SKIP')
 
 pkgver() {
-  cd "$_pkgname"
+  cd KDEck-Control
   git describe --long --tags --abbrev=7 | sed 's/^v//;s/\([^-]*-g\)/r\1/;s/-/./g'
 }
 
 package() {
-  cd "$_pkgname"
+  cd KDEck-Control
   install -Dm644 -t "$pkgdir/usr/share/$_pkgname" src/*.py
   cp -r examples "$pkgdir/usr/share/$_pkgname/examples"
-  install -Dm755 -t "$pkgdir/usr/bin" bin/galleon-deck bin/galleon-deck-config bin/galleon-addon
+  install -Dm755 -t "$pkgdir/usr/bin" bin/kdeck-control bin/kdeck-control-config bin/kdeck-addon
 
-  install -Dm644 data/applications/io.github.galleondeck.Config.desktop \
-    "$pkgdir/usr/share/applications/io.github.galleondeck.Config.desktop"
-  install -Dm644 data/udev/71-galleon-deck.rules "$pkgdir/usr/lib/udev/rules.d/71-galleon-deck.rules"
+  install -Dm644 data/applications/org.kde.kdeckcontrol.desktop \
+    "$pkgdir/usr/share/applications/org.kde.kdeckcontrol.desktop"
+  install -Dm644 data/udev/71-kdeck-control.rules "$pkgdir/usr/lib/udev/rules.d/71-kdeck-control.rules"
   install -dm755 "$pkgdir/usr/lib/modules-load.d"
-  echo uinput > "$pkgdir/usr/lib/modules-load.d/galleon-deck.conf"
-  sed 's|^ExecStart=.*|ExecStart=/usr/bin/galleon-deck|' data/systemd/galleon-deck.service \
-    | install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user/galleon-deck.service"
+  echo uinput > "$pkgdir/usr/lib/modules-load.d/kdeck-control.conf"
+  sed 's|^ExecStart=.*|ExecStart=/usr/bin/kdeck-control|' data/systemd/kdeck-control.service \
+    | install -Dm644 /dev/stdin "$pkgdir/usr/lib/systemd/user/kdeck-control.service"
 
   install -Dm644 README.md "$pkgdir/usr/share/doc/$_pkgname/README.md"
   install -Dm644 docs/PROTOCOL.md "$pkgdir/usr/share/doc/$_pkgname/PROTOCOL.md"

@@ -2,7 +2,7 @@
 
 #include "Types.hpp"
 
-namespace galleon {
+namespace kdeck {
 
 // Fills the now-playing fields of `state` from playerctl. Cached for under a second.
 // An empty `players` list follows whichever player playerctl picks. Names in the
@@ -19,4 +19,4 @@ QStringList listMediaPlayers();
 // pattern that contains * or ? is kept. Empty when the text cannot be saved.
 QString normalizeMediaPlayer(const QString &raw);
 
-} // namespace galleon
+} // namespace kdeck

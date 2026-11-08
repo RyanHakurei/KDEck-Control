@@ -14,7 +14,7 @@
 #include <memory>
 #include <optional>
 
-namespace galleon {
+namespace kdeck {
 
 class Deck;
 class FocusThread;
@@ -117,4 +117,4 @@ private:
     FocusThread *m_focus = nullptr;
 };
 
-} // namespace galleon
+} // namespace kdeck

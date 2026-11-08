@@ -1,9 +1,9 @@
-add_executable(galleon-deck
+add_executable(kdeck-control
     main.cpp
     Service.cpp
 )
 
-target_link_libraries(galleon-deck PRIVATE galleon-core Qt6::Gui)
-kde_target_enable_exceptions(galleon-deck PRIVATE)
+target_link_libraries(kdeck-control PRIVATE kdeck-core Qt6::Gui)
+kde_target_enable_exceptions(kdeck-control PRIVATE)
 
-install(TARGETS galleon-deck ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})
+install(TARGETS kdeck-control ${KDE_INSTALL_TARGETS_DEFAULT_ARGS})

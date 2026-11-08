@@ -1,14 +1,12 @@
-# galleon-deck
+# KDEck Control
 
-Stream Deck support on Linux for the **Corsair Galleon 100 SD** keyboard: the 12 LCD
-keys, the top screen, and the two dials. Elgato's Stream Deck software only runs on
-Windows and macOS, so this project takes its place.
+KDE Plasma support for the Stream Deck built into the **Corsair Galleon 100 SD**:
+the 12 LCD keys, the top screen, and the two dials. Elgato's Stream Deck software
+only runs on Windows and macOS, so this project takes its place.
 
 <p align="center"><img src="docs/deck.gif" width="396" alt="The deck booting, then switching to the Star Citizen profile when the game takes focus"></p>
 
-![The Galleon Deck configurator](docs/screenshot.png)
-
-📖 **[Read the wiki](https://github.com/NLMP-DDHS/galleon-deck/wiki)** for a full guide to the app, config files and troubleshooting.
+![The KDEck Control configurator](docs/screenshot.png)
 
 - **Profiles and pages** of 12 keys, like Elgato's app: icons, labels, images, animated GIFs, colours.
 - **Folders:** a key opens another set of 12 keys. The top-left key steps back;
@@ -23,17 +21,14 @@ Windows and macOS, so this project takes its place.
   i3, niri and X11 desktops).
 - **Themes:** 7 built-in themes, your own, or one **generated from your wallpaper**.
   Themes can use rounded keys or a sci-fi `hud` style with cut corners.
-- **Add-ons (optional):** ready-made profiles for games, with their own themes and
-  auto-switch rules. Each is a separate download from the
-  [add-on releases](https://github.com/NLMP-DDHS/galleon-deck-addons/releases)
-  (Star Citizen so far). Skip them if you don't need them; install the ones you want
-  from the app's **Add-ons** tab.
+- **Add-ons:** not compatible yet. Packages made for the previous program name
+  will not install until a compatibility stub exists.
 - **Profile switch:** a short glitch as the deck changes profile, with the new
   profile's logo (or its name) resolving on the top screen.
 - **Boot animation:** a CRT power-on effect, a terminal boot log, your logo glitching in,
   and keys that "decrypt" one by one. Plays at login and when the keyboard is plugged in.
   Your own GIF also works.
-- **Galleon Deck app:** a desktop app to customize all of this, with a live preview.
+- **KDEck Control app:** a desktop app to customize all of this, with a live preview.
   The real deck updates as you edit.
 - **Fails safe:** if the service stops, the keyboard falls back to its own numpad mode.
 
@@ -47,54 +42,51 @@ Windows and macOS, so this project takes its place.
 |---|---|
 | Hardware | Corsair Galleon 100 SD (Stream Deck part: USB `1b1c:2b18`) |
 | Distros | Arch/CachyOS/Manjaro, Debian 13+/Ubuntu 24.04+, Fedora, openSUSE; others with manual packages |
-| Desktops | Any Wayland or X11 desktop: GNOME, KDE Plasma, Hyprland, Sway, niri, XFCE, … |
+| Desktop | KDE Plasma. System stats use KDE System Monitor (`ksystemstats`). |
 | Audio | PipeWire (`wpctl`) or PulseAudio (`pactl`) |
-| Init | systemd user service, or XDG autostart without systemd |
-| Python | 3.10+ (3.10 needs `tomli`) |
-| App | GTK 4 + libadwaita 1.5+ (the service itself doesn't need them) |
+| Init | systemd user service |
+| App | Kirigami (Qt 6) |
 
 Some features depend on the desktop:
 
 | Feature | Where it works |
 |---|---|
-| Auto-switch profiles by focused window | Hyprland, Sway, i3, niri, any X11 session. Not yet on GNOME or KDE Plasma under Wayland ([#3](https://github.com/NLMP-DDHS/galleon-deck/issues/3)). |
+| Auto-switch profiles by focused window | Hyprland, Sway, i3, niri, and X11. Not on KDE Plasma under Wayland yet. |
 | NumLock handled for the deck's numpad | Hyprland and X11. Elsewhere your desktop's NumLock applies (keep it on). Chromium browsers on Hyprland need NumLock on for the main keyboard too (see [Troubleshooting](#troubleshooting)). |
 | Wallpaper detection | noctalia, swww, hyprpaper, GNOME. For anything else, set `command` under `[wallpaper_theme]`. |
 | Now-playing on the top screen | Any player that supports MPRIS (needs `playerctl`) |
 
-Developed and tested on CachyOS with Hyprland. Other distros and desktops are
-supported by design but less tested. Reports and pull requests are welcome.
+KDEck Control is a KDE application. Reports and pull requests are welcome.
 
 ## Install
 
-**Arch/CachyOS/Manjaro:** build the package in `packaging/arch`, then start the service
-for your user:
+**Arch/CachyOS/Manjaro:** build the package in `packaging/arch-qt`, then start the
+service for your user:
 
 ```sh
-git clone https://github.com/NLMP-DDHS/galleon-deck
-cd galleon-deck/packaging/arch
+git clone https://github.com/RyanHakurei/KDEck-Control
+cd KDEck-Control/packaging/arch-qt
 makepkg -si
-systemctl --user enable --now galleon-deck
+systemctl --user enable --now kdeck-control
 ```
 
-The package builds from the latest commit on GitHub, so run `makepkg -si` again to
-update. pacman removes it like any other package (`sudo pacman -R galleon-deck-git`).
-If you used `./install.sh` before, run `./uninstall.sh` first.
+The package builds from this checkout. Run `makepkg -si` again to update.
+pacman removes it like any other package (`sudo pacman -R kdeck-control`).
 
 **Other distros**, or to run from a checkout:
 
 ```sh
-git clone https://github.com/NLMP-DDHS/galleon-deck
-cd galleon-deck
+git clone https://github.com/RyanHakurei/KDEck-Control
+cd KDEck-Control
 ./install.sh
 ```
 
 The installer:
 - installs the packages for your distro (pacman, apt, dnf or zypper);
 - fetches the icon font if your distro doesn't package it;
-- copies the service to `~/.local/share/galleon-deck` and adds `galleon-deck` and
-  `galleon-deck-config` to `~/.local/bin`;
-- creates a starter config in `~/.config/galleon-deck`;
+- copies the service to `~/.local/share/kdeck-control` and adds `kdeck-control` and
+  `kdeck-control-config` to `~/.local/bin`;
+- creates a starter config in `~/.config/kdeck-control` when you do not already have one;
 - asks for `sudo` once, for a udev rule that gives your user access to the deck and to
   `/dev/uinput`;
 - starts the service.
@@ -105,9 +97,7 @@ packages. `--no-root` prints the root commands instead of running them.
 
 ## Use
 
-The [wiki](https://github.com/NLMP-DDHS/galleon-deck/wiki) covers every panel, key action and setting in detail.
-
-Open **Galleon Deck** from your app menu, or run `galleon-deck-config`:
+Open **KDEck Control** from your app menu, or run `kdeck-control-config`:
 
 - **Key:** click a key in the preview to change its label, icon (a searchable picker
   with 10,000+ icons), image (PNG, JPEG, WebP, or an animated GIF), colours, and what
@@ -118,11 +108,9 @@ Open **Galleon Deck** from your app menu, or run `galleon-deck-config`:
   import an official Stream Deck profile (`.streamDeckProfile`). Titles, pictures,
   hotkeys, websites, open, media, and page changes come across. A plugin key keeps
   its title and picture; assign what it does on that key. From a terminal:
-  `galleon-deck import ~/Downloads/name.streamDeckProfile`.
-- **Add-ons:** **Install from file…** takes a downloaded add-on package (`.tar.gz`).
-  The tab then upgrades and removes add-ons and runs their tools, like syncing a
-  game's keybinds. From a terminal: `galleon-addon install ~/Downloads/star-citizen-1.0.0.tar.gz`,
-  `galleon-addon list`, `galleon-addon remove star-citizen`.
+  `kdeck-control import ~/Downloads/name.streamDeckProfile`.
+- **Add-ons:** the Add-ons tab is still in the app. Packages from the previous
+  program name do not install yet.
 
 The app follows the deck. It opens on the profile and page the deck is showing, and
 switches along when the deck changes, for example when a game takes focus. Pick
@@ -136,8 +124,10 @@ profile.
 
 ### Config files
 
-Everything lives in `~/.config/galleon-deck` as commented TOML, so you can edit it by hand
-too:
+New installs keep their files in `~/.config/kdeck-control`. If that directory has
+no `config.toml` and `~/.config/galleon-deck/config.toml` is already there, the
+program reads the existing directory and does not copy or rename it. The files
+are commented TOML, so you can edit them by hand too:
 
 ```
 config.toml          global settings, auto-switch rules, boot animation, wallpaper theme
@@ -194,10 +184,10 @@ Anything else in the kernel's
 works too. In the configurator, the **Record** button fills a key in for you.
 
 Useful commands:
-- `galleon-deck --version` prints the version (add-ons can require a minimum).
-- `galleon-deck --theme-from-wallpaper [image]` builds the wallpaper theme from a terminal.
-- `journalctl --user -u galleon-deck` shows the service log.
-- `systemctl --user restart galleon-deck` restarts the service and replays the boot animation.
+- `kdeck-control --version` prints the version (add-ons can require a minimum).
+- `kdeck-control --theme-from-wallpaper [image]` builds the wallpaper theme from a terminal.
+- `journalctl --user -u kdeck-control` shows the service log.
+- `systemctl --user restart kdeck-control` restarts the service and replays the boot animation.
 
 ## Troubleshooting
 

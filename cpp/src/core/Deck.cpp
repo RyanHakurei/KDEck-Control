@@ -15,7 +15,7 @@
 #include <sys/ioctl.h>
 #include <unistd.h>
 
-namespace galleon {
+namespace kdeck {
 namespace {
 
 QByteArray packet(const QByteArray &header, const QByteArray &chunk)
@@ -185,4 +185,4 @@ QByteArray Deck::read() const
     return buffer;
 }
 
-} // namespace galleon
+} // namespace kdeck

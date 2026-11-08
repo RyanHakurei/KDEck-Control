@@ -5,7 +5,7 @@ import sys
 import tempfile
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
-import galleon_deck as gd  # noqa: E402
+import kdeck_control as gd  # noqa: E402
 
 
 def test_walk_and_label():

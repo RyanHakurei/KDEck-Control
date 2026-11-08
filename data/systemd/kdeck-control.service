@@ -1,9 +1,9 @@
-# Stream Deck service for the Corsair Galleon 100 SD (https://github.com/NLMP-DDHS/galleon-deck).
+# Stream Deck service for the Corsair Galleon 100 SD (https://github.com/RyanHakurei/KDEck-Control).
 # Tied to the graphical session: it launches apps and reads window focus.
 # If it stops, the keyboard falls back to its own numpad mode.
 
 [Unit]
-Description=Galleon 100 SD Stream Deck
+Description=KDEck Control
 PartOf=graphical-session.target
 After=graphical-session.target
 
@@ -11,7 +11,7 @@ After=graphical-session.target
 Type=simple
 # Include ~/.local/bin: AppImages and user-installed tools often live there.
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=%h/.local/bin/galleon-deck
+ExecStart=%h/.local/bin/kdeck-control
 Restart=on-failure
 RestartSec=3
 

@@ -9,7 +9,7 @@
 #include <functional>
 #include <memory>
 
-namespace galleon {
+namespace kdeck {
 
 // Digital interference. amount 0 leaves the image alone. Matches the Python glitch().
 QImage glitchImage(const QImage &image, double amount);
@@ -57,4 +57,4 @@ private:
     std::unique_ptr<State> m_state;
 };
 
-} // namespace galleon
+} // namespace kdeck

@@ -15,7 +15,7 @@
 #include <cmath>
 #include <optional>
 
-namespace galleon {
+namespace kdeck {
 namespace {
 
 constexpr double FreqMax = 6000.0;
@@ -464,4 +464,4 @@ StatReading statReading(const QString &id)
     return state.readings.value(id, StatReading{});
 }
 
-} // namespace galleon
+} // namespace kdeck

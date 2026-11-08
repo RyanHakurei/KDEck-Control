@@ -1,0 +1,11 @@
+#!/bin/sh
+# Add-on manager for kdeck-control: install downloaded add-on packages, remove them.
+here=$(dirname "$(readlink -f "$0")")
+# The distro Python has the packaged modules; a conda/pyenv/venv python3
+# earlier on PATH usually doesn't.
+py=/usr/bin/python3; [ -x "$py" ] || py=python3
+for src in "$here/../src" "$here/../share/kdeck-control" "${XDG_DATA_HOME:-$HOME/.local/share}/kdeck-control"; do
+    [ -f "$src/kdeck_addon.py" ] && exec "$py" "$src/kdeck_addon.py" "$@"
+done
+echo "kdeck-addon: can't find kdeck_addon.py" >&2
+exit 1
